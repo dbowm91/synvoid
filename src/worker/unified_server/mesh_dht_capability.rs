@@ -24,6 +24,11 @@
 //! separate call the DNS caller must make. An unsigned advertisement, or a
 //! provider with no verifier, is reported as **not authentic** — absence of a
 //! check is never treated as success.
+//!
+//! The domain-registration half is stricter on purpose:
+//! [`DhtRecordStore::is_domain_registration_authentic`] returns `false` for
+//! every registration until mesh Phase 04b binds a record's signer to its
+//! publisher. See that method's documentation.
 
 use std::sync::Arc;
 
@@ -53,13 +58,15 @@ impl DhtRecordStore for DhtRecordStoreAdapter {
         self.0
             .get_all_dns_domain_registrations()
             .into_iter()
-            .map(
-                |(domain, origin_node_id, ip_addresses)| AdvertisedDomainRegistration {
-                    domain,
-                    origin_node_id,
-                    ip_addresses,
-                },
-            )
+            .map(|record| AdvertisedDomainRegistration {
+                domain: record.domain,
+                origin_node_id: record.origin_node_id,
+                ip_addresses: record.ip_addresses,
+                publisher_id: record.publisher_id,
+                signature: record.signature,
+                created_at: record.created_at,
+                ttl_seconds: record.ttl_seconds,
+            })
             .collect()
     }
 
@@ -162,6 +169,39 @@ impl DhtRecordStore for DhtRecordStoreAdapter {
             .store_dns_domain_registration(domain, origin_node_id, ip_addresses, ttl_seconds)
     }
 
+    /// Fail closed until mesh Phase 04b lands.
+    ///
+    /// The store verifies a DHT record against the record's own
+    /// `signer_public_key`, without binding that key to `source_node_id`.
+    /// "The signature verifies" therefore means "whoever published this signed
+    /// it", not "the node claiming the domain signed it" — the gap campaign
+    /// finding B4 fixed in mesh 04b. Reporting `true` here would hand DNS a
+    /// trust claim the mesh layer has not earned, so composition reports
+    /// `false` for every registration. The publisher-binding check in
+    /// `sync_from_dht` is independent and still runs; a future provider
+    /// override must not be a second signature scheme.
+    fn is_domain_registration_authentic(
+        &self,
+        registration: &AdvertisedDomainRegistration,
+    ) -> bool {
+        if registration.signature.is_empty() {
+            tracing::warn!(
+                domain = %registration.domain,
+                "domain registration is unsigned; treating as unauthenticated"
+            );
+            return false;
+        }
+
+        tracing::warn!(
+            domain = %registration.domain,
+            publisher = %registration.publisher_id,
+            origin = %registration.origin_node_id,
+            "domain registration authenticity is unavailable until mesh Phase 04b \
+             binds the signer to the publisher; treating as unauthenticated"
+        );
+        false
+    }
+
     fn store_anycast_node(
         &self,
         node_id: String,
@@ -259,6 +299,16 @@ mod tests {
         assert!(capability.all_dns_domain_registrations().is_empty());
         assert!(capability.anycast_nodes_for_zone("example.com").is_empty());
         assert!(!capability.is_anycast_advertisement_authentic(&unsigned()));
+        assert!(
+            !capability.is_domain_registration_authentic(&unsigned_registration()),
+            "a registration cannot be authentic before mesh Phase 04b binds the \
+             signer to the publisher; returning true here would be an unearned \
+             trust claim"
+        );
+        assert!(
+            !capability.has_domain_authorization_claim(&unsigned_registration()),
+            "no org-key domain claim exists today; authorization defaults to deny"
+        );
     }
 
     fn unsigned() -> AdvertisedAnycastRecord {
@@ -271,6 +321,18 @@ mod tests {
             ttl_seconds: 600,
             source_node_id: "edge-1".to_string(),
             signer_public_key: None,
+        }
+    }
+
+    fn unsigned_registration() -> AdvertisedDomainRegistration {
+        AdvertisedDomainRegistration {
+            domain: "example.com".to_string(),
+            origin_node_id: "origin-1".to_string(),
+            ip_addresses: vec!["203.0.113.10".to_string()],
+            publisher_id: "origin-1".to_string(),
+            signature: Vec::new(),
+            created_at: 1,
+            ttl_seconds: 600,
         }
     }
 }

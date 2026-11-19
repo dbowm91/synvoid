@@ -162,6 +162,137 @@ fn verify_steps() -> Vec<(&'static str, &'static str)> {
             "test \"$(cargo test -p synvoid-mesh --test mesh_two_node_contract \
              --profile ci -- --list 2>/dev/null | grep -c ': test$')\" -ge 2",
         ),
+        // DNS wire contract: responses are decoded the way a client decodes
+        // them (owner names, compression pointers, question echo). The guard
+        // step exists because a suite that silently runs zero cases is how the
+        // relative-owner and presentation-name defects shipped unnoticed.
+        (
+            "dns-wire",
+            "cargo nextest run -p synvoid-dns --cargo-profile ci --profile ci \
+             --test dns_wire_contract",
+        ),
+        (
+            "dns-wire-guard",
+            "test \"$(cargo test -p synvoid-dns --test dns_wire_contract \
+             --profile ci -- --list 2>/dev/null | grep -c ': test$')\" -ge 8",
+        ),
+        // DNS response-envelope contract: OPT fields, the client's EDNS
+        // payload budget, and QDCOUNT/ARCOUNT agree with the bytes written.
+        // The guard step exists because a suite that silently runs zero cases
+        // is how the CLASS/TTL/RDLENGTH envelope defects shipped unnoticed.
+        (
+            "dns-envelope",
+            "cargo nextest run -p synvoid-dns --cargo-profile ci --profile ci \
+             --test dns_envelope_contract",
+        ),
+        (
+            "dns-envelope-guard",
+            "test \"$(cargo test -p synvoid-dns --test dns_envelope_contract \
+             --profile ci -- --list 2>/dev/null | grep -c ': test$')\" -ge 10",
+        ),
+        // DNS serving-correctness campaign (plans/dns_serving_correctness_roadmap.md).
+        // Each suite decodes the wire the way a client does or verifies a
+        // signature/proof with an independent implementation. The guard steps
+        // exist because a suite that silently runs zero cases is how the
+        // campaign's defects shipped behind a green total.
+        (
+            "dns-admission",
+            "cargo nextest run -p synvoid-dns --cargo-profile ci --profile ci \
+             --test dns_admission_contract",
+        ),
+        (
+            "dns-admission-guard",
+            "test \"$(cargo test -p synvoid-dns --test dns_admission_contract \
+             --profile ci -- --list 2>/dev/null | grep -c ': test$')\" -ge 9",
+        ),
+        (
+            "dnssec-signature",
+            "cargo nextest run -p synvoid-dns --cargo-profile ci --profile ci \
+             --test dnssec_signature_contract",
+        ),
+        (
+            "dnssec-signature-guard",
+            "test \"$(cargo test -p synvoid-dns --test dnssec_signature_contract \
+             --profile ci -- --list 2>/dev/null | grep -c ': test$')\" -ge 13",
+        ),
+        (
+            "dnssec-denial",
+            "cargo nextest run -p synvoid-dns --cargo-profile ci --profile ci \
+             --test dnssec_denial_contract",
+        ),
+        (
+            "dnssec-denial-guard",
+            "test \"$(cargo test -p synvoid-dns --test dnssec_denial_contract \
+             --profile ci -- --list 2>/dev/null | grep -c ': test$')\" -ge 18",
+        ),
+        (
+            "dns-recursive",
+            "cargo nextest run -p synvoid-dns --cargo-profile ci --profile ci \
+             --test dns_recursive_contract",
+        ),
+        (
+            "dns-recursive-guard",
+            "test \"$(cargo test -p synvoid-dns --test dns_recursive_contract \
+             --profile ci -- --list 2>/dev/null | grep -c ': test$')\" -ge 25",
+        ),
+        (
+            "dns-control-plane",
+            "cargo nextest run -p synvoid-dns --cargo-profile ci --profile ci \
+             --test dns_control_plane_contract",
+        ),
+        (
+            "dns-control-plane-guard",
+            "test \"$(cargo test -p synvoid-dns --test dns_control_plane_contract \
+             --profile ci -- --list 2>/dev/null | grep -c ': test$')\" -ge 22",
+        ),
+        (
+            "dns-authoritative",
+            "cargo nextest run -p synvoid-dns --cargo-profile ci --profile ci \
+             --test dns_authoritative_lookup",
+        ),
+        (
+            "dns-authoritative-guard",
+            "test \"$(cargo test -p synvoid-dns --test dns_authoritative_lookup \
+             --profile ci -- --list 2>/dev/null | grep -c ': test$')\" -ge 11",
+        ),
+        (
+            // Feature-gated: without `--features mesh` the target compiles but
+            // runs zero tests, which is a false green.
+            "dns-mesh-trust",
+            "cargo nextest run -p synvoid-dns --features mesh --cargo-profile ci \
+             --profile ci --test dns_mesh_trust_contract",
+        ),
+        (
+            "dns-mesh-trust-guard",
+            "test \"$(cargo test -p synvoid-dns --features mesh \
+             --test dns_mesh_trust_contract --profile ci -- --list 2>/dev/null \
+             | grep -c ': test$')\" -ge 9",
+        ),
+        (
+            // Root-package lane: GET /config/dns and /health are assembled here.
+            "dns-truthfulness",
+            "cargo nextest run -p synvoid --features dns --cargo-profile ci \
+             --profile ci --test dns_truthfulness_contract",
+        ),
+        (
+            "dns-truthfulness-guard",
+            "test \"$(cargo test -p synvoid --features dns \
+             --test dns_truthfulness_contract --profile ci -- --list 2>/dev/null \
+             | grep -c ': test$')\" -ge 5",
+        ),
+        (
+            // External clients against a real listener: dig for the wire
+            // surface and delv for DNSSEC validation. A missing tool is a
+            // skip inside the suite, never a silent pass.
+            "dns-external-interop",
+            "cargo nextest run -p synvoid-dns --cargo-profile ci --profile ci \
+             --test dns_external_interop",
+        ),
+        (
+            "dns-external-interop-guard",
+            "test \"$(cargo test -p synvoid-dns --test dns_external_interop \
+             --profile ci -- --list 2>/dev/null | grep -c ': test$')\" -ge 6",
+        ),
         (
             "repo-guards",
             "cargo nextest run -p synvoid-repo-guards --cargo-profile ci --profile ci",

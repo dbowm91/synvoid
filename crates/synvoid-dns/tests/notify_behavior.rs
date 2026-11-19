@@ -89,7 +89,7 @@ fn notify_authorized_stale_serial_ignored() {
 }
 
 #[test]
-fn notify_unknown_zone_returns_nxdomain() {
+fn notify_unknown_zone_returns_notauth() {
     let zones = Arc::new(ShardedZoneStore::new());
     zones.insert(
         "example.test".to_string(),
@@ -108,14 +108,14 @@ fn notify_unknown_zone_returns_nxdomain() {
     let response = handler.handle_notify(&query, client);
     assert!(
         response.is_some(),
-        "NOTIFY for unknown zone must return Some (with NXDOMAIN)"
+        "NOTIFY for unknown zone must return Some (with NOTAUTH)"
     );
     let bytes = response.unwrap();
     let rcode = response_rcode(&bytes);
     assert_eq!(
         rcode,
-        wire::RCODE_NXDOMAIN,
-        "unknown zone must return NXDOMAIN (3), got {}",
+        wire::UPDATE_RCODE_NOTAUTH,
+        "unknown zone must return NOTAUTH (9), got {}",
         rcode
     );
 }

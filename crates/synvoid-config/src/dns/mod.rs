@@ -353,11 +353,52 @@ mod phase45_contract_tests {
         expect_unsupported(&cfg, "dns.prefetch.enabled");
     }
 
+    /// Decision T5: RFC 5011 management is removed. The section stays
+    /// parseable, activation is a typed `Unsupported`, and the reason names the
+    /// static file as the only supported anchor source.
     #[test]
     fn trust_anchor_activation_rejected() {
         let mut cfg = valid_base();
         cfg.trust_anchors.enabled = true;
-        expect_unsupported(&cfg, "dns.trust_anchors.enabled");
+        match cfg.validate() {
+            Err(DnsConfigError::Unsupported { path, reason }) => {
+                assert_eq!(path, "dns.trust_anchors.enabled");
+                assert!(
+                    reason.contains("RFC 5011") && reason.contains("not implemented"),
+                    "reason must name the removed feature: {reason}"
+                );
+                assert!(
+                    reason.contains("dns.recursive.trust_anchor_path"),
+                    "reason must name the static file as the only source: {reason}"
+                );
+            }
+            other => panic!("expected Unsupported(dns.trust_anchors.enabled), got {other:?}"),
+        }
+    }
+
+    /// R9: requesting validation on a forwarder is a startup error unless the
+    /// operator accepts delegated validation explicitly.
+    #[test]
+    fn unvalidated_forwarding_requires_opt_in() {
+        let mut cfg = valid_base();
+        cfg.recursive.enabled = true;
+        cfg.recursive.upstream_provider = super::RecursiveUpstreamProvider::Cloudflare;
+        cfg.recursive.dnssec_validation = true;
+        match cfg.validate() {
+            Err(DnsConfigError::InvalidRecursive(reason)) => assert!(
+                reason.contains("allow_unvalidated_forwarding"),
+                "error must name the opt-in: {reason}"
+            ),
+            other => panic!("expected InvalidRecursive, got {other:?}"),
+        }
+
+        cfg.recursive.allow_unvalidated_forwarding = true;
+        assert!(cfg.validate().is_ok(), "explicit opt-in must be accepted");
+
+        // A locally validating recursor needs no opt-in.
+        cfg.recursive.upstream_provider = super::RecursiveUpstreamProvider::Recursive;
+        cfg.recursive.allow_unvalidated_forwarding = false;
+        assert!(cfg.validate().is_ok());
     }
 
     #[test]

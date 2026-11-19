@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 use synvoid_dns::notify::{NotifyConfig, NotifyHandler};
 use synvoid_dns::server::ShardedZoneStore;
+use synvoid_dns::transfer::TransferAcl;
 use synvoid_dns::transfer::{ZoneTransfer, AXFR_QUERY_TYPE, IXFR_QUERY_TYPE};
 use synvoid_dns::update::DynamicUpdateHandler;
 use synvoid_dns::wire;
@@ -161,7 +162,9 @@ fn update_disabled_by_default_refuses_mutation() {
 fn update_malformed_message_does_not_mutate_zone() {
     let zones = Arc::new(ShardedZoneStore::new());
     zones.insert("example.test".to_string(), zone_with_soa("example.test", 1));
-    let handler = DynamicUpdateHandler::new(zones.clone()).with_config(true, true, false);
+    let handler = DynamicUpdateHandler::new(zones.clone())
+        .with_config(true, true, false)
+        .expect("no TSIG required");
     let client: IpAddr = "10.0.0.1".parse().unwrap();
 
     // A well-formed query header + question for a zone that doesn't exist.
@@ -187,7 +190,9 @@ fn update_malformed_message_does_not_mutate_zone() {
 fn update_enabled_invalid_zone_returns_error_rcode() {
     let zones = Arc::new(ShardedZoneStore::new());
     // No zone inserted.
-    let handler = DynamicUpdateHandler::new(zones.clone()).with_config(true, true, false);
+    let handler = DynamicUpdateHandler::new(zones.clone())
+        .with_config(true, true, false)
+        .expect("no TSIG required");
     let client: IpAddr = "10.0.0.1".parse().unwrap();
     let query = build_minimal_update_query("nonexistent.test");
 
@@ -304,8 +309,15 @@ fn ixfr_denied_by_default_returns_no_data() {
         "IXFR must be denied by default when not in allowlist"
     );
 
-    let response =
-        zone_transfer.handle_ixfr_request("example.test", client, Some(5), None, 0xCAFEu16, &query);
+    let response = zone_transfer.handle_ixfr_request(
+        "example.test",
+        client,
+        Some(5),
+        None,
+        0xCAFEu16,
+        &query,
+        true,
+    );
     assert!(
         response.is_err(),
         "IXFR must be denied (Err) when client is not allowed and IXFR is disabled"
@@ -326,7 +338,7 @@ fn transfer_disabled_when_axfr_enabled_false() {
     zones.insert("example.test".to_string(), zone_with_soa("example.test", 1));
     let zone_transfer = ZoneTransfer::with_security_config(
         zones.clone(),
-        vec!["10.0.0.1".to_string()],
+        TransferAcl::from_entries(&["10.0.0.1".to_string()]),
         None,
         false, // allow_wildcard_transfer
         false, // wildcard_transfer_requires_tsig
@@ -335,7 +347,8 @@ fn transfer_disabled_when_axfr_enabled_false() {
         false, // require_tsig
         false, // axfr_enabled = false
         true,  // tcp_only
-    );
+    )
+    .expect("no TSIG required");
     let client: IpAddr = "10.0.0.1".parse().unwrap();
     let response = zone_transfer.handle_axfr_request(
         "example.test",
@@ -360,7 +373,7 @@ fn axfr_allowed_client_gets_soa_bracketed_transfer() {
     zones.insert("example.test".to_string(), zone_with_soa("example.test", 1));
     let zone_transfer = ZoneTransfer::with_security_config(
         zones.clone(),
-        vec!["10.0.0.1".to_string()],
+        TransferAcl::from_entries(&["10.0.0.1".to_string()]),
         None,
         false, // allow_wildcard_transfer
         false, // wildcard_transfer_requires_tsig
@@ -369,7 +382,8 @@ fn axfr_allowed_client_gets_soa_bracketed_transfer() {
         false, // require_tsig
         true,  // axfr_enabled
         true,  // tcp_only
-    );
+    )
+    .expect("no TSIG required");
     let client: IpAddr = "10.0.0.1".parse().unwrap();
 
     let response = zone_transfer.handle_axfr_request(

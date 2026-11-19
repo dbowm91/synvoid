@@ -16,6 +16,7 @@
 //! | [`zone`] | Zone construction helpers (`build_test_zone`, `zone_with_soa`, `zone_with_records`) |
 //! | [`context`] | Test context setup (`setup`, `make_ctx`, `make_config`) |
 //! | [`response`] | Response wire-format parsers (`response_rcode`, `skip_wire_name`, etc.) |
+//! | [`dnssec`] | DNSSEC signature **verification** (`verify_answer`, `verify_rrset`, served-DNSKEY decoding) |
 //! | [`runtime_config`] | DNS-owned runtime config fixtures (`AuthoritativeRuntimeBuilder`, `recursive_runtime`, `dns_runtime`, `start_bound_dns_server`) — Phases 126-128; `DnsServer::new` accepts no persistence DTO |
 //!
 //! # Design principles
@@ -40,6 +41,9 @@
 //! that file.  Extract here when the second usage appears.
 
 pub mod context;
+pub mod dnssec;
+#[cfg(feature = "mesh")]
+pub mod mesh_dht;
 pub mod query;
 pub mod response;
 pub mod runtime_config;
@@ -52,12 +56,15 @@ pub use context::{make_config, make_ctx, setup};
 #[allow(unused_imports)]
 pub use query::{
     build_axfr_query, build_ixfr_query, build_notify_query, build_query, build_query_with_do_bit,
-    build_rr, build_update_add_record, build_update_header, build_zone_question, encode_qname,
+    build_query_with_edns, build_query_with_edns_options, build_rr, build_update_add_record,
+    build_update_header, build_zone_question, encode_qname,
 };
 #[allow(unused_imports)]
 pub use response::{
-    is_authoritative, is_recursion_available, is_response, parse_answer_types, response_ancount,
-    response_arcount, response_flags, response_nscount, response_rcode, skip_name, skip_wire_name,
+    answer_owner, is_authoritative, is_recursion_available, is_response, parse_answer_types,
+    parse_opt, question_name, read_wire_name, response_ancount, response_arcount, response_flags,
+    response_nscount, response_qdcount, response_question, response_rcode, skip_name,
+    skip_wire_name, OptRecord,
 };
 #[allow(unused_imports)]
 pub use runtime_config::{

@@ -100,12 +100,14 @@ Issues so no agent describes XDP dropping as active.
   `ThreatIntelConsumerKind` variants, provenance rules, and the six
   `tests/security_guard.rs` functions that pin the boundary. Previously smeared
   across `synvoid_mesh`, `block_store`, and `waf_engine`.
-- `dns_trust_anchor_rfc5011` — the RFC 5011 state machine
-  (`crates/synvoid-dns/src/trust_anchor.rs`, 6 states), `Missing`→`Pending`
-  restoration gated on `trust_point == 0`, the unsynchronized
-  `TrustAnchorManager` / `hickory_proto::TrustAnchors` limitation, and why
-  `[dns] trust_anchors.enabled` currently fails validation with typed
-  `Unsupported`. Previously fragmented inside `dns_dnssec`.
+- `dns_trust_anchor_rfc5011` — this knowledge unit described the RFC 5011
+  state machine (`crates/synvoid-dns/src/trust_anchor.rs`, 6 states),
+  `Missing`→`Pending` restoration gated on `trust_point == 0`, and the
+  unsynchronized `TrustAnchorManager` / `hickory_proto::TrustAnchors`
+  limitation. **The source module was deleted by decision T5** (nothing fed or
+  consumed the state machine); the `[dns] trust_anchors.enabled` rejection
+  remains, and the static anchor file
+  (`dns.recursive.trust_anchor_path`) is the only source.
 
 Both were authored from source read directly by the parent agent, **not** from
 subagent prose — one subagent summary claimed 7 anchor states (there are 6) and

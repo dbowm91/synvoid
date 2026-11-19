@@ -193,6 +193,7 @@ fn authoritative_bind_and_limits_project_exactly() {
     config.bind_address = "127.0.0.1".to_string();
     config.port = 5353;
     config.limits.max_tcp_connections = 11;
+    config.limits.max_encrypted_connections = 16;
     config.limits.max_concurrent_queries = 12;
     config.limits.max_query_size = 4096;
     config.limits.max_response_size = 8192;
@@ -208,6 +209,10 @@ fn authoritative_bind_and_limits_project_exactly() {
         SocketAddr::from(([127, 0, 0, 1], 5353))
     );
     assert_eq!(runtime.authoritative.limits.max_tcp_connections, 11);
+    assert_eq!(
+        runtime.authoritative.limits.max_encrypted_connections, 16,
+        "the encrypted-listener cap must project, not fall back to the TCP cap"
+    );
     assert_eq!(runtime.authoritative.limits.max_concurrent_queries, 12);
     assert_eq!(runtime.authoritative.limits.max_query_size, 4096);
     assert_eq!(runtime.authoritative.limits.max_response_size, 8192);
@@ -737,6 +742,15 @@ fn forwarder_modes_do_not_claim_local_dnssec_validation() {
     config.recursive.enabled = true;
     config.recursive.dnssec_validation = true;
 
+    // R9: requesting validation on a forwarder is a startup error unless the
+    // operator accepts delegated validation.
+    config.recursive.upstream_provider = RecursiveUpstreamProvider::Google;
+    assert!(
+        dns_runtime_config_from_persisted(&config).is_err(),
+        "a validating forwarder without the opt-in must be rejected"
+    );
+    config.recursive.allow_unvalidated_forwarding = true;
+
     for provider in [
         RecursiveUpstreamProvider::Google,
         RecursiveUpstreamProvider::Cloudflare,
@@ -765,6 +779,9 @@ fn recursive_acl_parses_cidrs_and_action_before_startup() {
 
     let mut config = authoritative();
     config.recursive.enabled = true;
+    // This test projects the ACL, not validation policy; the recursive default
+    // (`dnssec_validation = true` on a forwarder) needs the R9 opt-in.
+    config.recursive.allow_unvalidated_forwarding = true;
     config.recursive.client_acl = Some(RecursiveClientAcl {
         allowed_clients: vec!["10.0.0.0/8".to_string(), "2001:db8::/32".to_string()],
         action: "reject".to_string(),

@@ -27,7 +27,7 @@ pub use auth::{
     hash_admin_token, hash_admin_token_with_cost, verify_admin_token, verify_admin_token_async,
     verify_dummy_admin_token_async, AdminTokenResult,
 };
-use axum::{http::StatusCode, response::IntoResponse, routing::get, Json, Router};
+use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
 pub use metrics::start_metrics_publisher;
 pub use state::{
     get_cpu_memory_usage, get_current_connections, set_current_connections, AdminRateLimiter,
@@ -461,11 +461,30 @@ pub(crate) fn build_router_from_state(
         .with_state(state)
 }
 
-async fn health_check() -> (StatusCode, Json<serde_json::Value>) {
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({
-            "status": "ok"
-        })),
-    )
+/// Liveness probe.
+///
+/// Reports `ok` plus, when the worker built a DNS server, the realized DNS
+/// capability matrix. `dns.capabilities` separates `realized` from
+/// `config_requested`, so a configured-but-unrealized feature is visible here
+/// instead of having to be inferred.
+async fn health_check(
+    State(state): State<Arc<AdminState>>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    // The state handle only carries a DNS checker when the `dns` feature built
+    // one; without it the endpoint stays the bare liveness probe.
+    #[cfg(not(feature = "dns"))]
+    let _ = &state;
+
+    let mut body = serde_json::json!({
+        "status": "ok"
+    });
+
+    #[cfg(feature = "dns")]
+    if let Some(checker) = state.dns_health() {
+        body["dns"] = serde_json::json!({
+            "capabilities": checker.capabilities(),
+        });
+    }
+
+    (StatusCode::OK, Json(body))
 }

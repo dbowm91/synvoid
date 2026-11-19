@@ -267,6 +267,8 @@ impl MeshDnsRegistry {
         let origin = RegisteredOriginNode {
             node_id: registration.node_id.clone(),
             domains: vec![registration.domain.clone()],
+            declared_zones: vec![registration.domain.clone()],
+            ip_addresses: registration.ip_addresses.clone(),
             geo: registration.geo.clone(),
             healthy: registration.healthy,
             capacity: registration.capacity,
@@ -699,6 +701,8 @@ impl MeshDnsRegistry {
                                 let origin = RegisteredOriginNode {
                                     node_id: origin_node_id.clone(),
                                     domains: vec![domain.clone()],
+                                    declared_zones: vec![domain.clone()],
+                                    ip_addresses: Vec::new(),
                                     geo: None,
                                     healthy: true,
                                     capacity: 100,

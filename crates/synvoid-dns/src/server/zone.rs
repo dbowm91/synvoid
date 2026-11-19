@@ -25,34 +25,10 @@ impl DnsServer {
     ///
     /// A name that is an FQDN outside the zone is rejected rather than stored
     /// under a key nothing will ever query.
-    fn normalize_record_name(origin: &str, name: &str) -> Result<String, String> {
-        let origin = origin.trim().trim_end_matches('.').to_lowercase();
-        let name = name.trim().trim_end_matches('.').to_lowercase();
-
-        if name.is_empty() {
-            return Err("has an empty name".to_string());
-        }
-
-        if name == "@" {
-            return Ok("@".to_string());
-        }
-
-        // No dot: already relative to the origin.
-        if !name.contains('.') {
-            return Ok(name);
-        }
-
-        if name == origin {
-            return Ok("@".to_string());
-        }
-
-        match name.strip_suffix(&format!(".{origin}")) {
-            Some(relative) if !relative.is_empty() => Ok(relative.to_string()),
-            _ => Err(format!(
-                "is outside zone '{origin}'; a record name must be '@', a label, \
-                 or an FQDN inside the zone"
-            )),
-        }
+    pub(crate) fn normalize_record_name(origin: &str, name: &str) -> Result<String, String> {
+        // One rule, one implementation: the writer in `server/mod.rs` applies
+        // the same normalizer to every installed record map.
+        Zone::normalize_record_name(origin, name)
     }
 
     pub fn load_zones(&self, zone_configs: Vec<ZoneSpec>) -> Result<(), String> {
@@ -104,6 +80,7 @@ impl DnsServer {
                 };
             }
 
+            let mut records: RecordMap = HashMap::new();
             for record_config in &zone_config.records {
                 // The application adapter already mapped the persisted
                 // record-type enum to Hickory's runtime type.
@@ -173,6 +150,9 @@ impl DnsServer {
                     }
                 }
 
+                // Operator input boundary: a fully-qualified name outside the
+                // zone is rejected here rather than stored under a key nothing
+                // can query. The writer then canonicalizes the key again.
                 let stored_name =
                     Self::normalize_record_name(&zone_config.origin, &record_config.name).map_err(
                         |reason| {
@@ -198,22 +178,20 @@ impl DnsServer {
                     priority: record_config.priority,
                 };
 
-                if record.record_type == RecordType::SOA {
-                    zone.serial = Self::parse_soa_serial(&record.value);
-                }
-
-                // Phase 132: the key must be the *normalized* name. The query
-                // path strips the zone origin off the qname before looking a
-                // record up, so a record stored under the name as written
-                // (an FQDN) is unreachable and the zone answers authoritative
-                // NXDOMAIN for a name it contains.
-                let key = (stored_name, record.record_type);
-                zone.records.entry(key).or_default().push(record);
+                records
+                    .entry((stored_name, record.record_type))
+                    .or_default()
+                    .push(record);
             }
 
-            if zone.serial == 0 {
-                zone.serial = 1;
-            }
+            // Single writer: normalize owners, deduplicate, rebuild the owner
+            // index and denial chains, adopt the SOA serial.
+            zone.commit_records(records, SerialPolicy::AdoptSoa)
+                .map_err(|reason| {
+                    tracing::error!(zone = %zone_config.origin, "Rejecting zone: {reason}");
+                    metrics::counter!("dns_zone_reload_failures_total").increment(1);
+                    reason
+                })?;
 
             // RFC 1035 §3.3.13: every authoritative zone MUST contain at least one SOA record.
             if zone.get_soa().is_none() {
@@ -237,10 +215,8 @@ impl DnsServer {
 
         self.rebuild_zone_index();
 
-        if let Some(ref cache) = self.cache {
-            for origin in zone_origins {
-                cache.invalidate_zone(origin, InvalidationReason::ZoneLoad);
-            }
+        for origin in zone_origins {
+            self.invalidate_zone_cache(origin, InvalidationReason::ZoneLoad);
         }
 
         Ok(zone_configs.len())
@@ -267,6 +243,11 @@ impl DnsServer {
                 metrics::counter!("dns_zone_reload_failures_total").increment(1);
                 format!("Zone {} (from store): {}", origin, e)
             })?;
+            // Reload path: the persisted records are the source of truth, so
+            // they are installed through the single writer (normalize,
+            // deduplicate, rebuild the chain, restore the SOA serial).
+            zone.commit_records(zone.records.clone(), SerialPolicy::AdoptSoa)
+                .map_err(|reason| format!("Zone {} (from store): {reason}", origin))?;
             tracing::info!("Loaded DNS zone from store: {}", origin);
             zone.mark_active();
             self.zones.insert(origin.clone(), zone);
@@ -275,10 +256,8 @@ impl DnsServer {
 
         self.rebuild_zone_index();
 
-        if let Some(ref cache) = self.cache {
-            for origin in &loaded_origins {
-                cache.invalidate_zone(origin, InvalidationReason::ZoneLoadFromStore);
-            }
+        for origin in &loaded_origins {
+            self.invalidate_zone_cache(origin, InvalidationReason::ZoneLoadFromStore);
         }
 
         Ok(())
@@ -300,21 +279,41 @@ impl DnsServer {
     /// or test-only zones.
     pub fn replace_zone_with_validation(&self, mut candidate: Zone) -> Result<(), String> {
         let origin = candidate.origin.clone();
+        // Single writer: normalize, deduplicate, rebuild the owner index and
+        // denial chains — then validate the result. The candidate's serial is
+        // preserved: this API's contract is "swap in this version", and the
+        // caller owns the version number.
+        candidate
+            .commit_records(candidate.records.clone(), SerialPolicy::Keep)
+            .map_err(|reason| format!("Zone {origin}: {reason}"))?;
         candidate
             .validate_zone_for_activation()
             .map_err(|e| e.to_string())?;
         candidate.mark_active();
         self.zones.insert(origin.clone(), candidate);
         self.zone_index_dirty.store(true, Ordering::Release);
-        if let Some(ref cache) = self.cache {
-            cache.invalidate_zone(&origin, InvalidationReason::ZoneLoad);
-        }
+        self.invalidate_zone_cache(&origin, InvalidationReason::ZoneLoad);
         tracing::info!(zone = %origin, "Zone replaced atomically with validation");
         Ok(())
     }
 
+    /// Invalidate the answer cache for one origin.
+    ///
+    /// Paired with every server-side [`Zone::commit_records`] call. The cache
+    /// handle lives on the server, not on a `Zone`, because the same writer is
+    /// used by cache-less callers (IXFR, mesh apply, tests).
+    pub(crate) fn invalidate_zone_cache(&self, origin: &str, reason: InvalidationReason) {
+        if let Some(ref cache) = self.cache {
+            cache.invalidate_zone(origin, reason);
+        }
+    }
+
     pub fn save_zones_to_store(&self, store: &ZoneStore) -> Result<(), String> {
+        let mut failure: Option<String> = None;
         self.zones.for_each(|origin, zone| {
+            if failure.is_some() {
+                return;
+            }
             let records: Vec<(String, RecordType, String, u32, Option<u32>)> = zone
                 .records
                 .values()
@@ -330,27 +329,68 @@ impl DnsServer {
                 })
                 .collect();
 
-            let _ = store.save_zone(origin, &records);
+            if let Err(e) = store.save_zone(origin, &records) {
+                failure = Some(format!("Failed to persist zone {origin}: {e}"));
+            }
         });
 
-        Ok(())
+        match failure {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
-    pub fn add_record(&self, zone: &str, record: DnsZoneRecord) -> Result<(), String> {
-        let key = (record.name.clone(), record.record_type);
-        let zone_origin = zone.to_string();
-        self.zones.get_or_create_and_update(zone, |zone_entry| {
-            zone_entry.records.entry(key).or_default().push(record);
-        });
+    pub fn add_record(&self, zone: &str, mut record: DnsZoneRecord) -> Result<(), String> {
+        let zone_origin = Zone::normalize_origin(zone);
+        let mut error: Option<String> = None;
 
-        self.zones.update_zone(&zone_origin, |z| {
-            z.health.record_count = z.records.len();
-        });
+        self.zones
+            .get_or_create_and_update(&zone_origin, |zone_entry| {
+                let relative = match Zone::normalize_record_name(&zone_entry.origin, &record.name) {
+                    Ok(relative) => relative,
+                    Err(reason) => {
+                        error = Some(format!(
+                            "Zone {}: record name '{}' {reason}",
+                            zone_entry.origin, record.name
+                        ));
+                        return;
+                    }
+                };
+                record.name = relative.clone();
 
-        if let Some(ref cache) = self.cache {
-            cache.invalidate_zone(&zone_origin, InvalidationReason::RecordAdd);
+                // RFC 2181 §5.2: every record in an RRset shares one TTL. Adding a
+                // record with a different TTL would make the served RRset
+                // internally inconsistent, so it is rejected instead of silently
+                // rewritten.
+                if let Some(existing) = zone_entry
+                    .records
+                    .get(&(relative.clone(), record.record_type))
+                    .and_then(|rrset| rrset.first())
+                {
+                    if existing.ttl != record.ttl {
+                        error = Some(format!(
+                        "Zone {}: record '{}' has TTL {} but the existing {:?} RRset has TTL {}",
+                        zone_entry.origin, relative, record.ttl, record.record_type, existing.ttl
+                    ));
+                        return;
+                    }
+                }
+
+                let mut records = zone_entry.records.clone();
+                records
+                    .entry((relative, record.record_type))
+                    .or_default()
+                    .push(record);
+                if let Err(reason) = zone_entry.commit_records(records, SerialPolicy::Bump) {
+                    error = Some(reason);
+                }
+            });
+
+        if let Some(error) = error {
+            return Err(error);
         }
 
+        self.invalidate_zone_cache(&zone_origin, InvalidationReason::RecordAdd);
         Ok(())
     }
 
@@ -359,20 +399,25 @@ impl DnsServer {
         self
     }
 
+    /// Attach a transfer handler built from the persisted transfer policy.
+    ///
+    /// Fails when the policy asks for TSIG without a verifier: a handler that
+    /// cannot authenticate must not be constructed, so composition fails
+    /// startup instead of serving transfers with a presence check (R2).
     #[allow(clippy::too_many_arguments)]
     pub fn with_zone_transfer_config(
         mut self,
-        allowed_transfers: Vec<String>,
+        acl: crate::transfer::TransferAcl,
         allow_wildcard_transfer: bool,
         wildcard_transfer_requires_tsig: bool,
         ixfr_enabled: bool,
         ixfr_fallback_to_axfr: bool,
         tsig_verifier: Option<Arc<crate::tsig::TsigVerifier>>,
         require_tsig: bool,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let zone_transfer = crate::transfer::ZoneTransfer::with_security_config(
             self.zones.clone(),
-            allowed_transfers,
+            acl,
             tsig_verifier,
             allow_wildcard_transfer,
             wildcard_transfer_requires_tsig,
@@ -381,9 +426,9 @@ impl DnsServer {
             require_tsig,
             false, // axfr_enabled: disabled by default
             true,  // tcp_only: AXFR requires TCP
-        );
+        )?;
         self.zone_transfer = Some(Arc::new(zone_transfer));
-        self
+        Ok(self)
     }
 
     pub fn with_notify_handler(mut self, notify_handler: crate::notify::NotifyHandler) -> Self {
@@ -396,20 +441,16 @@ impl DnsServer {
         enabled: bool,
         allow_any: bool,
         require_tsig: bool,
-    ) -> Self {
+    ) -> Result<Self, String> {
         if enabled {
-            self.update_handler = Some(
-                crate::update::DynamicUpdateHandler::new(self.zones.clone()).with_config(
-                    enabled,
-                    allow_any,
-                    require_tsig,
-                ),
-            );
+            let handler = crate::update::DynamicUpdateHandler::new(self.zones.clone())
+                .with_config(enabled, allow_any, require_tsig)?;
+            self.update_handler = Some(handler);
             self.zones.for_each_mut(|zone| {
                 zone.mark_active();
             });
         }
-        self
+        Ok(self)
     }
 
     pub(super) fn reverse_domain(domain: &str) -> String {
@@ -507,6 +548,13 @@ impl DnsServer {
         self.connection_limits.clone()
     }
 
+    /// Cap on concurrent accepted connections per encrypted listener.
+    ///
+    /// DoT, DoH, and DoQ size their accept-loop semaphore from this value.
+    pub fn max_encrypted_connections(&self) -> usize {
+        self.connection_limits.max_encrypted_connections()
+    }
+
     pub fn get_dnssec(&self) -> Option<Arc<RwLock<DnsSecKeyManager>>> {
         self.dnssec.clone()
     }
@@ -585,9 +633,7 @@ impl DnsServer {
         self.zones.remove(&origin_lower);
         self.zone_index_dirty.store(true, Ordering::Release);
 
-        if let Some(ref cache) = self.cache {
-            cache.invalidate_zone(&origin_lower, InvalidationReason::ZoneDelete);
-        }
+        self.invalidate_zone_cache(&origin_lower, InvalidationReason::ZoneDelete);
 
         if let Some(store) = store {
             store.delete_zone(&origin_lower)?;
@@ -595,47 +641,6 @@ impl DnsServer {
 
         tracing::info!("Deleted zone {}", origin_lower);
         Ok(())
-    }
-
-    /// Start a DNSSEC key rollover and invalidate all cached DNSSEC-signed responses.
-    /// Key rollover affects all zones, so the entire cache is cleared.
-    pub fn start_key_rollover(&self, key_type: crate::dnssec::KeyType) -> Result<(), String> {
-        if let Some(ref dnssec) = self.dnssec {
-            dnssec
-                .write()
-                .start_key_rollover(key_type)
-                .map_err(|e| e.to_string())?;
-            self.zones.for_each_mut(|zone| {
-                zone.health.dnssec_state = DnssecState::KeyRollover;
-            });
-            if let Some(ref cache) = self.cache {
-                cache.clear(InvalidationReason::DnssecKeyRollover);
-                tracing::info!("Cache cleared after starting {:?} rollover", key_type);
-            }
-            Ok(())
-        } else {
-            Err("DNSSEC not configured".to_string())
-        }
-    }
-
-    /// Complete a DNSSEC key rollover and invalidate all cached DNSSEC-signed responses.
-    pub fn complete_key_rollover(&self, key_type: crate::dnssec::KeyType) -> Result<(), String> {
-        if let Some(ref dnssec) = self.dnssec {
-            dnssec
-                .write()
-                .complete_key_rollover(key_type)
-                .map_err(|e| e.to_string())?;
-            self.zones.for_each_mut(|zone| {
-                zone.health.dnssec_state = DnssecState::Signed;
-            });
-            if let Some(ref cache) = self.cache {
-                cache.clear(InvalidationReason::DnssecKeyRollover);
-                tracing::info!("Cache cleared after completing {:?} rollover", key_type);
-            }
-            Ok(())
-        } else {
-            Err("DNSSEC not configured".to_string())
-        }
     }
 }
 

@@ -593,7 +593,8 @@ fn test_notify_handler_disabled_returns_none() {
 fn test_update_handler_disabled_returns_none() {
     let (zones, zone_trie, ecs_filter_config) = setup();
     let update_handler = synvoid_dns::update::DynamicUpdateHandler::new(Arc::clone(&zones))
-        .with_config(false, false, true);
+        .with_config(false, false, false)
+        .expect("no TSIG required");
     let ctx = make_ctx_with_handlers(
         &zones,
         &zone_trie,
@@ -605,11 +606,13 @@ fn test_update_handler_disabled_returns_none() {
     let query = build_update_query(0xDD12, "test.local");
     let result = DnsServer::handle_query(&ctx, &query, Some(IpAddr::from([127, 0, 0, 1])));
 
-    // UPDATE with enabled=false: DynamicUpdateHandler.handle_update returns Err,
-    // which causes the dispatch to return None (silent drop).
-    assert!(
-        result.is_none(),
-        "UPDATE with handler.enabled=false should return None"
+    // UPDATE with enabled=false is answered NOTIMP: dropping a well-formed
+    // control-plane message leaves the client retrying a policy refusal.
+    let response = result.expect("disabled UPDATE must be answered, not dropped");
+    assert_eq!(
+        response[3] & 0x0F,
+        synvoid_dns::wire::UPDATE_RCODE_NOTIMP,
+        "disabled UPDATE must answer NOTIMP"
     );
 }
 
@@ -617,10 +620,18 @@ fn test_update_handler_disabled_returns_none() {
 #[test]
 fn test_wildcard_transfer_denied_when_disabled() {
     let zones = Arc::new(ShardedZoneStore::default());
+    let verifier = Arc::new(
+        synvoid_dns::tsig::TsigVerifier::new(vec![synvoid_dns::runtime_config::TsigRuntimeKey {
+            name: "wildcard-key".to_string(),
+            secret: b"wildcard-key-secret-material-0123456789".to_vec(),
+            algorithm: synvoid_dns::runtime_config::TsigAlgorithmRuntime::HmacSha256,
+        }])
+        .expect("test TSIG key"),
+    );
     let transfer = synvoid_dns::transfer::ZoneTransfer::with_security_config(
         Arc::clone(&zones),
-        vec!["*".to_string()],
-        None,
+        synvoid_dns::transfer::TransferAcl::from_entries(&["*".to_string()]),
+        Some(verifier),
         false, // allow_wildcard_transfer
         true,  // wildcard_transfer_requires_tsig
         true,  // ixfr_enabled
@@ -628,7 +639,8 @@ fn test_wildcard_transfer_denied_when_disabled() {
         true,  // require_tsig
         false, // axfr_enabled
         true,  // tcp_only
-    );
+    )
+    .expect("require_tsig with a verifier may be constructed");
     let allowed = transfer.is_transfer_allowed("10.0.0.1".parse().unwrap(), "example.com");
     assert!(
         !allowed,

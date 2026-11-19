@@ -166,9 +166,9 @@ fn notify_unknown_zone_preserves_other_cache() {
 // Section 3: Source allowlist enforcement
 // ══════════════════════════════════════════════════════════════════════
 
-/// Empty allowlist → all sources permitted.
+/// Empty allowlist → no source is permitted (R6: deny all by default).
 #[test]
-fn notify_empty_allowlist_allows_all() {
+fn notify_empty_allowlist_denies_all() {
     let zones = Arc::new(ShardedZoneStore::new());
     zones.insert("test.local".to_string(), zone_with_soa("test.local", 1));
     let cfg = NotifyConfig {
@@ -179,10 +179,7 @@ fn notify_empty_allowlist_allows_all() {
     let client: IpAddr = "198.51.100.99".parse().unwrap();
     let query = build_notify_query("test.local");
     let response = handler.handle_notify(&query, client);
-    assert!(
-        response.is_some(),
-        "empty allowlist must permit all sources"
-    );
+    assert!(response.is_none(), "empty allowlist must deny every source");
 }
 
 /// Specific IP allowlist → only that IP permitted.

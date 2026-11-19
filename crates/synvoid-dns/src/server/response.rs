@@ -5,6 +5,13 @@ use super::response_encoder::{
 use super::*;
 
 impl DnsServer {
+    /// Build a positive answer.
+    ///
+    /// `origin` is the zone origin: it is both the owner origin for the
+    /// stored records and the RRSIG signer name. `signing` is `None` for an
+    /// unsigned zone; `Some` for a signed one, in which case every RRset is
+    /// signed with the key its type requires and **no** RRset is emitted
+    /// without its RRSIG — a signing failure answers SERVFAIL instead.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn build_response(
         query_id: u16,
@@ -13,14 +20,12 @@ impl DnsServer {
         records: &[DnsZoneRecord],
         dnssec_ok: bool,
         edns_options: Option<&EdnsOptions>,
-        zsk: Option<&crate::dnssec::ZoneSigningKey>,
-        signer_name: &str,
+        max_size: usize,
+        signing: Option<&ZoneSigningKeys<'_>>,
+        origin: &str,
         rd: bool,
+        question: &[u8],
     ) -> (Arc<Vec<u8>>, EncodeReport) {
-        let max_size = edns_options
-            .map(|e| e.udp_payload_size as usize)
-            .unwrap_or(512);
-
         let qname_clean = if qname.is_empty() || qname == "@" {
             String::new()
         } else {
@@ -36,25 +41,87 @@ impl DnsServer {
             skipped: Vec::new(),
         };
 
-        for record in records {
+        // RFC 4035 §3.1.1: a signed response carries an RRSIG for every RRset
+        // it contains, and one RRSIG covers the whole RRset (RFC 4034
+        // §3.1.2) — not one signature per record. Signing is all-or-nothing:
+        // a failed signature is a SERVFAIL, never an unsigned RRset beside a
+        // signed one (L4). The RRSIG is emitted directly after its RRset.
+        let mut handled = vec![false; records.len()];
+        for i in 0..records.len() {
+            if handled[i] {
+                continue;
+            }
+            let owner = records[i].name.clone();
+            let record_type = records[i].record_type;
+            let members: Vec<usize> = (0..records.len())
+                .filter(|&j| {
+                    !handled[j] && records[j].name == owner && records[j].record_type == record_type
+                })
+                .collect();
+            for &j in &members {
+                handled[j] = true;
+            }
+
+            let mut served: Vec<&DnsZoneRecord> = Vec::with_capacity(members.len());
+            for &j in &members {
+                let record = &records[j];
+                let compression = if qname_clean.is_empty() {
+                    None
+                } else {
+                    Some((qname_clean.as_str(), question_name_offset))
+                };
+                match encode_rr(record, origin, compression) {
+                    Ok(encoded) => {
+                        envelope.answer_records.push(encoded);
+                        report.encoded_ok += 1;
+                        served.push(record);
+                    }
+                    Err(reason) => {
+                        tracing::warn!(
+                            qname = %record.name,
+                            record_type = ?record.record_type,
+                            reason = %reason,
+                            "DNS encode: record skipped"
+                        );
+                        report.record_skip(record.name.clone(), record.record_type, reason);
+                    }
+                }
+            }
+
+            let (true, Some(keys)) = (dnssec_ok, signing) else {
+                continue;
+            };
+            if served.is_empty() {
+                continue;
+            }
+
+            let Ok(rrsig) = Self::create_signed_rrsig(&served, origin, keys) else {
+                return Self::servfail_with_opt(query_id, rd, edns_options, question, &report);
+            };
+            let rrsig_record = DnsZoneRecord {
+                name: owner,
+                record_type: RecordType::RRSIG,
+                value: hex::encode(&rrsig),
+                ttl: served[0].ttl,
+                priority: None,
+            };
             let compression = if qname_clean.is_empty() {
                 None
             } else {
                 Some((qname_clean.as_str(), question_name_offset))
             };
-            match encode_rr(record, compression) {
+            match encode_rr(&rrsig_record, origin, compression) {
                 Ok(encoded) => {
                     envelope.answer_records.push(encoded);
-                    report.encoded_ok += 1;
                 }
                 Err(reason) => {
-                    tracing::warn!(
-                        qname = %record.name,
-                        record_type = ?record.record_type,
+                    tracing::error!(
+                        qname = %rrsig_record.name,
+                        record_type = "RRSIG",
                         reason = %reason,
-                        "DNS encode: record skipped"
+                        "DNS encode: RRSIG failed; refusing to serve the unsigned RRset"
                     );
-                    report.record_skip(record.name.clone(), record.record_type, reason);
+                    return Self::servfail_with_opt(query_id, rd, edns_options, question, &report);
                 }
             }
         }
@@ -66,112 +133,85 @@ impl DnsServer {
                 total = %records.len(),
                 "DNS encode: ALL records failed encoding for positive answer, returning SERVFAIL"
             );
-            let flags = build_response_flags(true, false, rd, false, false, 2);
-            let question = super::wire::build_question(qname, qtype, 1);
-            let has_opt = edns_options.is_some();
-            let arcount: u16 = if has_opt { 1 } else { 0 };
-            let mut packet = Vec::with_capacity(12 + question.len() + 16);
-            packet.extend_from_slice(&query_id.to_be_bytes());
-            packet.extend_from_slice(&flags.to_be_bytes());
-            packet.extend_from_slice(&1u16.to_be_bytes());
-            packet.extend_from_slice(&0u16.to_be_bytes());
-            packet.extend_from_slice(&0u16.to_be_bytes());
-            packet.extend_from_slice(&arcount.to_be_bytes());
-            packet.extend_from_slice(&question);
-            if let Some(edns) = edns_options {
-                let opt = build_opt_encoded_record(edns.udp_payload_size, false);
-                packet.extend_from_slice(&opt.bytes);
-            }
-            return (Arc::new(packet), report);
-        }
-
-        let records_signed = dnssec_ok && !records.is_empty() && zsk.is_some();
-
-        if records_signed {
-            if let Some(key) = zsk {
-                for record in records {
-                    let rrsig = Self::create_signed_rrsig(record, signer_name, key);
-                    if !rrsig.is_empty() {
-                        let rrsig_record = DnsZoneRecord {
-                            name: record.name.clone(),
-                            record_type: RecordType::RRSIG,
-                            value: hex::encode(&rrsig),
-                            ttl: record.ttl,
-                            priority: None,
-                        };
-                        let compression = if qname_clean.is_empty() {
-                            None
-                        } else {
-                            Some((qname_clean.as_str(), question_name_offset))
-                        };
-                        match encode_rr(&rrsig_record, compression) {
-                            Ok(encoded) => {
-                                envelope.answer_records.push(encoded);
-                            }
-                            Err(reason) => {
-                                tracing::warn!(
-                                    qname = %record.name,
-                                    record_type = "RRSIG",
-                                    reason = %reason,
-                                    "DNS encode: RRSIG record skipped"
-                                );
-                                report.record_skip(record.name.clone(), RecordType::RRSIG, reason);
-                            }
-                        }
-                    }
-                }
-            }
+            return Self::servfail_with_opt(query_id, rd, edns_options, question, &report);
         }
 
         let has_opt = edns_options.is_some() || dnssec_ok;
         if has_opt {
-            let udp_size = edns_options.map(|e| e.udp_payload_size).unwrap_or(4096);
-            envelope
-                .additional_records
-                .push(build_opt_encoded_record(udp_size, dnssec_ok));
+            let udp_size = edns_options
+                .map(|e| e.udp_payload_size)
+                .unwrap_or(crate::edns::EDNS_MAX_UDP_PAYLOAD);
+            envelope.additional_records.push(build_opt_encoded_record(
+                udp_size,
+                dnssec_ok,
+                crate::edns::EXTENDED_RCODE_NONE,
+            ));
         }
 
         // Authoritative servers never set AD — AD is a recursive validation signal.
-        // records_signed is only used for signing, not for the AD flag.
         let flags = build_response_flags(true, false, rd, false, false, 0);
 
-        let response = assemble_packet(&envelope, query_id, flags, qname, qtype);
+        let response = assemble_packet(&envelope, query_id, flags, question);
 
         if max_size > 0 && response.len() > max_size {
-            return Self::build_truncated_tc_response(query_id, qname, qtype, rd, edns_options);
+            return Self::build_truncated_tc_response(
+                query_id,
+                qname,
+                qtype,
+                rd,
+                edns_options,
+                question,
+            );
         }
 
         (Arc::new(response), report)
     }
 
-    pub(super) fn build_truncated_tc_response(
+    /// A SERVFAIL that echoes the question, carrying the client's OPT when it
+    /// sent one. Used whenever a response cannot be completed truthfully
+    /// (unencodable RRset, dropped RRSIG, missing signing key).
+    fn servfail_with_opt(
         query_id: u16,
-        qname: &str,
-        qtype: u16,
         rd: bool,
         edns_options: Option<&EdnsOptions>,
+        question: &[u8],
+        report: &EncodeReport,
+    ) -> (Arc<Vec<u8>>, EncodeReport) {
+        let flags = build_response_flags(true, false, rd, false, false, 2);
+        let mut envelope = ResponseEnvelope::default();
+        if let Some(edns) = edns_options {
+            envelope.additional_records.push(build_opt_encoded_record(
+                edns.udp_payload_size,
+                edns.dnssec_ok,
+                crate::edns::EXTENDED_RCODE_NONE,
+            ));
+        }
+        let packet = assemble_packet(&envelope, query_id, flags, question);
+        (Arc::new(packet), report.clone())
+    }
+
+    pub(super) fn build_truncated_tc_response(
+        query_id: u16,
+        _qname: &str,
+        _qtype: u16,
+        rd: bool,
+        edns_options: Option<&EdnsOptions>,
+        question: &[u8],
     ) -> (Arc<Vec<u8>>, EncodeReport) {
         let flags = build_response_flags(true, true, rd, false, false, 0);
 
-        let question = super::wire::build_question(qname, qtype, 1);
-
-        let has_opt = edns_options.is_some();
-        let arcount: u16 = if has_opt { 1 } else { 0 };
-
-        let mut packet = Vec::with_capacity(12 + question.len() + 16);
-        packet.extend_from_slice(&query_id.to_be_bytes());
-        packet.extend_from_slice(&flags.to_be_bytes());
-        packet.extend_from_slice(&1u16.to_be_bytes());
-        packet.extend_from_slice(&0u16.to_be_bytes());
-        packet.extend_from_slice(&0u16.to_be_bytes());
-        packet.extend_from_slice(&arcount.to_be_bytes());
-        packet.extend_from_slice(&question);
-
+        // Assemble through the same envelope as every other response so
+        // QDCOUNT always equals the question bytes actually written.
+        let mut envelope = ResponseEnvelope::default();
         if let Some(edns) = edns_options {
-            let opt = build_opt_encoded_record(edns.udp_payload_size, false);
-            packet.extend_from_slice(&opt.bytes);
+            envelope.additional_records.push(build_opt_encoded_record(
+                edns.udp_payload_size,
+                edns.dnssec_ok,
+                crate::edns::EXTENDED_RCODE_NONE,
+            ));
         }
 
+        let packet = assemble_packet(&envelope, query_id, flags, question);
         (Arc::new(packet), EncodeReport::default())
     }
 
@@ -183,11 +223,12 @@ impl DnsServer {
         _records: &[DnsZoneRecord],
         _dnssec_ok: bool,
         edns_options: Option<&EdnsOptions>,
-        _zsk: Option<&crate::dnssec::ZoneSigningKey>,
-        _signer_name: &str,
+        _signing: Option<&ZoneSigningKeys<'_>>,
+        _origin: &str,
         rd: bool,
+        question: &[u8],
     ) -> (Arc<Vec<u8>>, EncodeReport) {
-        Self::build_truncated_tc_response(query_id, qname, qtype, rd, edns_options)
+        Self::build_truncated_tc_response(query_id, qname, qtype, rd, edns_options, question)
     }
 
     pub(crate) fn parse_svcb_value(value: &str) -> Result<Vec<u8>, String> {
@@ -448,11 +489,9 @@ impl DnsServer {
         qname: &str,
         txt_value: &str,
         edns_options: Option<&EdnsOptions>,
+        max_size: usize,
+        question: &[u8],
     ) -> (Arc<Vec<u8>>, EncodeReport) {
-        let max_response_size = edns_options
-            .map(|e| e.udp_payload_size as usize)
-            .unwrap_or(512);
-
         let qname_clean = if qname.is_empty() || qname == "@" {
             String::new()
         } else {
@@ -480,7 +519,8 @@ impl DnsServer {
         } else {
             Some((qname_clean.as_str(), question_name_offset))
         };
-        match encode_rr(&acme_record, compression) {
+        // The ACME owner is the absolute queried name, not a zone-relative one.
+        match encode_rr(&acme_record, "", compression) {
             Ok(encoded) => {
                 envelope.answer_records.push(encoded);
                 report.encoded_ok += 1;
@@ -497,16 +537,18 @@ impl DnsServer {
         }
 
         if let Some(edns) = edns_options {
-            envelope
-                .additional_records
-                .push(build_opt_encoded_record(edns.udp_payload_size, false));
+            envelope.additional_records.push(build_opt_encoded_record(
+                edns.udp_payload_size,
+                edns.dnssec_ok,
+                crate::edns::EXTENDED_RCODE_NONE,
+            ));
         }
 
         let flags = build_response_flags(true, false, false, false, false, 0);
 
-        let response = assemble_packet(&envelope, query_id, flags, qname, 16);
+        let response = assemble_packet(&envelope, query_id, flags, question);
 
-        if response.len() > max_response_size && max_response_size > 0 {
+        if response.len() > max_size {
             return Self::build_truncated_response(
                 query_id,
                 qname,
@@ -523,20 +565,25 @@ impl DnsServer {
                 None,
                 "",
                 false,
+                question,
             );
         }
 
         (Arc::new(response), report)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn build_unsigned_nxdomain(
         query_id: u16,
         qname: &str,
         qtype: u16,
         soa: Option<&DnsZoneRecord>,
         edns_options: Option<&EdnsOptions>,
+        max_size: usize,
         _negative_cache_ttl: u32,
         rd: bool,
+        origin: &str,
+        question: &[u8],
     ) -> (Arc<Vec<u8>>, EncodeReport) {
         let mut envelope = ResponseEnvelope::default();
         let mut report = EncodeReport::default();
@@ -550,7 +597,6 @@ impl DnsServer {
                 "Missing SOA record for NXDOMAIN response (internal invariant violation), returning SERVFAIL"
             );
             let flags = build_response_flags(true, false, rd, false, false, 2);
-            let question = super::wire::build_question(qname, qtype, 1);
             let has_opt = edns_options.is_some();
             let arcount: u16 = if has_opt { 1 } else { 0 };
             let mut packet = Vec::with_capacity(12 + question.len() + 16);
@@ -560,16 +606,20 @@ impl DnsServer {
             packet.extend_from_slice(&0u16.to_be_bytes());
             packet.extend_from_slice(&0u16.to_be_bytes());
             packet.extend_from_slice(&arcount.to_be_bytes());
-            packet.extend_from_slice(&question);
+            packet.extend_from_slice(question);
             if let Some(edns) = edns_options {
-                let opt = build_opt_encoded_record(edns.udp_payload_size, false);
+                let opt = build_opt_encoded_record(
+                    edns.udp_payload_size,
+                    edns.dnssec_ok,
+                    crate::edns::EXTENDED_RCODE_NONE,
+                );
                 packet.extend_from_slice(&opt.bytes);
             }
             return (Arc::new(packet), report);
         };
 
         let mut soa_failed = false;
-        match encode_rr(soa_record, None) {
+        match encode_rr(soa_record, origin, None) {
             Ok(mut rec) => {
                 rec.section = DnsSection::Authority;
                 envelope.authority_records.push(rec);
@@ -587,7 +637,6 @@ impl DnsServer {
 
         if soa_failed {
             let flags = build_response_flags(true, false, rd, false, false, 2);
-            let question = super::wire::build_question(qname, qtype, 1);
             let has_opt = edns_options.is_some();
             let arcount: u16 = if has_opt { 1 } else { 0 };
             let mut packet = Vec::with_capacity(12 + question.len() + 16);
@@ -597,34 +646,445 @@ impl DnsServer {
             packet.extend_from_slice(&0u16.to_be_bytes());
             packet.extend_from_slice(&0u16.to_be_bytes());
             packet.extend_from_slice(&arcount.to_be_bytes());
-            packet.extend_from_slice(&question);
+            packet.extend_from_slice(question);
             if let Some(edns) = edns_options {
-                let opt = build_opt_encoded_record(edns.udp_payload_size, false);
+                let opt = build_opt_encoded_record(
+                    edns.udp_payload_size,
+                    edns.dnssec_ok,
+                    crate::edns::EXTENDED_RCODE_NONE,
+                );
                 packet.extend_from_slice(&opt.bytes);
             }
             return (Arc::new(packet), report);
         }
 
         if let Some(edns) = edns_options {
-            envelope
-                .additional_records
-                .push(build_opt_encoded_record(edns.udp_payload_size, false));
+            envelope.additional_records.push(build_opt_encoded_record(
+                edns.udp_payload_size,
+                edns.dnssec_ok,
+                crate::edns::EXTENDED_RCODE_NONE,
+            ));
         }
 
         let flags = build_response_flags(true, false, rd, false, false, 3);
 
-        let packet = assemble_packet(&envelope, query_id, flags, qname, qtype);
-        (Arc::new(packet), report)
+        let packet = assemble_packet(&envelope, query_id, flags, question);
+        let packet = Self::fit_to_transport(
+            query_id,
+            packet,
+            qname,
+            qtype,
+            edns_options,
+            max_size,
+            rd,
+            question,
+        );
+        (packet, report)
     }
 
+    /// Append one answer-section RRset and, for a signed zone, the RRSIG that
+    /// covers it — at `signature_owner`, which is **not** always the owner of
+    /// the records as served.
+    ///
+    /// A wildcard expansion answers at the qname while the RRSIG covers the
+    /// wildcard owner (RFC 4035 §3.1.3.3); a DNAME answer signs the DNAME RRset
+    /// at its own owner (RFC 6672 §5.3.1). Returns `false` when the RRset or
+    /// its signature cannot be produced; the caller must then SERVFAIL.
+    fn push_signed_answer_rrset(
+        envelope: &mut super::response_encoder::ResponseEnvelope,
+        rrset: &[&DnsZoneRecord],
+        signature_owner: &str,
+        origin: &str,
+        signing: Option<&ZoneSigningKeys<'_>>,
+    ) -> bool {
+        let Some(keys) = signing else {
+            return true;
+        };
+        let Some(first) = rrset.first() else {
+            return true;
+        };
+        let Ok(rrsig) = Self::create_signed_rrsig(rrset, origin, keys) else {
+            return false;
+        };
+        let rrsig_record = DnsZoneRecord {
+            name: signature_owner.to_string(),
+            record_type: RecordType::RRSIG,
+            value: hex::encode(&rrsig),
+            ttl: first.ttl,
+            priority: None,
+        };
+        match encode_rr(&rrsig_record, origin, None) {
+            Ok(mut encoded) => {
+                encoded.section = DnsSection::Answer;
+                envelope.answer_records.push(encoded);
+                true
+            }
+            Err(reason) => {
+                tracing::error!(
+                    owner = %signature_owner,
+                    reason = %reason,
+                    "DNS encode: answer RRSIG failed; refusing to serve the unsigned RRset"
+                );
+                false
+            }
+        }
+    }
+
+    /// A wildcard answer: the RRset synthesized at the qname, its RRSIG at the
+    /// wildcard owner, and the phase-05 next-closer proof (RFC 4035 §3.1.3.3).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn build_wildcard_response(
+        response_id: u16,
+        qname: &str,
+        qtype: u16,
+        wildcard: &str,
+        records: &[DnsZoneRecord],
+        proof: &[Arc<DnsZoneRecord>],
+        dnssec_ok: bool,
+        edns_options: Option<&EdnsOptions>,
+        max_size: usize,
+        signing: Option<&ZoneSigningKeys<'_>>,
+        origin: &str,
+        rd: bool,
+        question: &[u8],
+    ) -> Arc<Vec<u8>> {
+        use super::response_encoder::{
+            assemble_packet, build_opt_encoded_record, build_response_flags, ResponseEnvelope,
+        };
+
+        let signing = if dnssec_ok { signing } else { None };
+        let qname_clean = qname.trim_end_matches('.').to_lowercase();
+        let compression = if qname_clean.is_empty() {
+            None
+        } else {
+            Some((qname_clean.as_str(), 12u16))
+        };
+
+        let mut envelope = ResponseEnvelope::default();
+        let mut handled = vec![false; records.len()];
+
+        for index in 0..records.len() {
+            if handled[index] {
+                continue;
+            }
+            let owner = records[index].name.clone();
+            let record_type = records[index].record_type;
+            let members: Vec<usize> = (0..records.len())
+                .filter(|&candidate| {
+                    !handled[candidate]
+                        && records[candidate].name == owner
+                        && records[candidate].record_type == record_type
+                })
+                .collect();
+            for &member in &members {
+                handled[member] = true;
+            }
+
+            for &member in &members {
+                match encode_rr(&records[member], origin, compression) {
+                    Ok(encoded) => {
+                        envelope.answer_records.push(encoded);
+                    }
+                    Err(reason) => {
+                        tracing::error!(
+                            qname = %qname,
+                            reason = %reason,
+                            "DNS encode: wildcard answer failed; returning SERVFAIL"
+                        );
+                        return Self::servfail_packet(response_id, rd, edns_options, question);
+                    }
+                }
+            }
+
+            // The RRSIG covers the wildcard owner, not the synthesized name.
+            let wildcard_rrset: Vec<DnsZoneRecord> = members
+                .iter()
+                .map(|&member| {
+                    let mut record = records[member].clone();
+                    record.name = wildcard.to_string();
+                    record
+                })
+                .collect();
+            let signed: Vec<&DnsZoneRecord> = wildcard_rrset.iter().collect();
+            if !Self::push_signed_answer_rrset(&mut envelope, &signed, wildcard, origin, signing) {
+                return Self::servfail_packet(response_id, rd, edns_options, question);
+            }
+        }
+
+        for proof_record in proof {
+            if !Self::push_authority_rrset(&mut envelope, proof_record.as_ref(), origin, signing) {
+                tracing::error!(
+                    qname = %qname,
+                    "DNS encode: wildcard proof or its RRSIG failed; returning SERVFAIL"
+                );
+                return Self::servfail_packet(response_id, rd, edns_options, question);
+            }
+        }
+
+        if let Some(edns) = edns_options {
+            envelope.additional_records.push(build_opt_encoded_record(
+                edns.udp_payload_size,
+                dnssec_ok,
+                crate::edns::EXTENDED_RCODE_NONE,
+            ));
+        } else if dnssec_ok {
+            envelope.additional_records.push(build_opt_encoded_record(
+                crate::edns::EDNS_MAX_UDP_PAYLOAD,
+                dnssec_ok,
+                crate::edns::EXTENDED_RCODE_NONE,
+            ));
+        }
+
+        let flags = build_response_flags(true, false, rd, false, false, 0);
+        let packet = assemble_packet(&envelope, response_id, flags, question);
+        Self::fit_to_transport(
+            response_id,
+            packet,
+            qname,
+            qtype,
+            edns_options,
+            max_size,
+            rd,
+            question,
+        )
+    }
+
+    /// A DNAME answer: the DNAME RRset (signed) and the synthesized CNAME
+    /// (never signed, RFC 6672 §5.3.1), in that order.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn build_dname_response(
+        response_id: u16,
+        qname: &str,
+        qtype: u16,
+        answer: &[DnsZoneRecord],
+        dnssec_ok: bool,
+        edns_options: Option<&EdnsOptions>,
+        max_size: usize,
+        signing: Option<&ZoneSigningKeys<'_>>,
+        origin: &str,
+        rd: bool,
+        question: &[u8],
+    ) -> Arc<Vec<u8>> {
+        use super::response_encoder::{
+            assemble_packet, build_opt_encoded_record, build_response_flags, ResponseEnvelope,
+        };
+
+        let signing = if dnssec_ok { signing } else { None };
+        let qname_clean = qname.trim_end_matches('.').to_lowercase();
+        let compression = if qname_clean.is_empty() {
+            None
+        } else {
+            Some((qname_clean.as_str(), 12u16))
+        };
+
+        let mut envelope = ResponseEnvelope::default();
+
+        let dname: Vec<&DnsZoneRecord> = answer
+            .iter()
+            .filter(|record| record.record_type == RecordType::DNAME)
+            .collect();
+        for record in &dname {
+            match encode_rr(record, origin, compression) {
+                Ok(encoded) => envelope.answer_records.push(encoded),
+                Err(reason) => {
+                    tracing::error!(
+                        qname = %qname,
+                        reason = %reason,
+                        "DNS encode: DNAME failed; returning SERVFAIL"
+                    );
+                    return Self::servfail_packet(response_id, rd, edns_options, question);
+                }
+            }
+        }
+        let dname_owner = dname
+            .first()
+            .map(|record| record.name.as_str())
+            .unwrap_or(qname);
+        if !Self::push_signed_answer_rrset(&mut envelope, &dname, dname_owner, origin, signing) {
+            return Self::servfail_packet(response_id, rd, edns_options, question);
+        }
+
+        for cname in answer
+            .iter()
+            .filter(|record| record.record_type == RecordType::CNAME)
+        {
+            match encode_rr(cname, origin, compression) {
+                Ok(encoded) => envelope.answer_records.push(encoded),
+                Err(reason) => {
+                    tracing::error!(
+                        qname = %qname,
+                        reason = %reason,
+                        "DNS encode: synthesized CNAME failed; returning SERVFAIL"
+                    );
+                    return Self::servfail_packet(response_id, rd, edns_options, question);
+                }
+            }
+        }
+
+        if let Some(edns) = edns_options {
+            envelope.additional_records.push(build_opt_encoded_record(
+                edns.udp_payload_size,
+                dnssec_ok,
+                crate::edns::EXTENDED_RCODE_NONE,
+            ));
+        } else if dnssec_ok {
+            envelope.additional_records.push(build_opt_encoded_record(
+                crate::edns::EDNS_MAX_UDP_PAYLOAD,
+                dnssec_ok,
+                crate::edns::EXTENDED_RCODE_NONE,
+            ));
+        }
+
+        let flags = build_response_flags(true, false, rd, false, false, 0);
+        let packet = assemble_packet(&envelope, response_id, flags, question);
+        Self::fit_to_transport(
+            response_id,
+            packet,
+            qname,
+            qtype,
+            edns_options,
+            max_size,
+            rd,
+            question,
+        )
+    }
+
+    /// A referral: AA=0, the delegation NS RRset in authority, in-bailiwick
+    /// glue in additional, and — for a signed zone — the DS RRset when the
+    /// delegation is secure, or the phase-05 no-DS proof when it is not
+    /// (RFC 4035 §3.1.4.1).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn build_referral_response(
+        response_id: u16,
+        qname: &str,
+        qtype: u16,
+        authority: &[DnsZoneRecord],
+        additional: &[DnsZoneRecord],
+        proof: &[DnsZoneRecord],
+        dnssec_ok: bool,
+        edns_options: Option<&EdnsOptions>,
+        max_size: usize,
+        signing: Option<&ZoneSigningKeys<'_>>,
+        origin: &str,
+        rd: bool,
+        question: &[u8],
+    ) -> Arc<Vec<u8>> {
+        use super::response_encoder::{
+            assemble_packet, build_opt_encoded_record, build_response_flags, ResponseEnvelope,
+        };
+
+        let signing = if dnssec_ok { signing } else { None };
+        let mut envelope = ResponseEnvelope::default();
+
+        for record in authority {
+            if !Self::push_authority_rrset(&mut envelope, record, origin, signing) {
+                tracing::error!(
+                    qname = %qname,
+                    "DNS encode: referral NS or its RRSIG failed; returning SERVFAIL"
+                );
+                return Self::servfail_packet(response_id, rd, edns_options, question);
+            }
+        }
+        for proof_record in proof {
+            if !Self::push_authority_rrset(&mut envelope, proof_record, origin, signing) {
+                tracing::error!(
+                    qname = %qname,
+                    "DNS encode: referral delegation proof failed; returning SERVFAIL"
+                );
+                return Self::servfail_packet(response_id, rd, edns_options, question);
+            }
+        }
+
+        // Glue is advisory: a record that cannot be encoded is dropped, never
+        // turned into a SERVFAIL for a referral that is otherwise complete.
+        for record in additional {
+            match encode_rr(record, origin, None) {
+                Ok(mut encoded) => {
+                    encoded.section = DnsSection::Additional;
+                    envelope.additional_records.push(encoded);
+                }
+                Err(reason) => tracing::warn!(
+                    owner = %record.name,
+                    reason = %reason,
+                    "DNS encode: referral glue skipped"
+                ),
+            }
+        }
+
+        if let Some(edns) = edns_options {
+            envelope.additional_records.push(build_opt_encoded_record(
+                edns.udp_payload_size,
+                dnssec_ok,
+                crate::edns::EXTENDED_RCODE_NONE,
+            ));
+        }
+
+        // A referral is not authoritative data: AA=0.
+        let flags = build_response_flags(false, false, rd, false, false, 0);
+        let packet = assemble_packet(&envelope, response_id, flags, question);
+        Self::fit_to_transport(
+            response_id,
+            packet,
+            qname,
+            qtype,
+            edns_options,
+            max_size,
+            rd,
+            question,
+        )
+    }
+
+    /// An empty response carrying `rcode` (used for YXDOMAIN when a DNAME
+    /// substitution would overflow the legal name length, RFC 6672 §3.2).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn build_rcode_response(
+        response_id: u16,
+        qname: &str,
+        qtype: u16,
+        rcode: u8,
+        edns_options: Option<&EdnsOptions>,
+        max_size: usize,
+        rd: bool,
+        question: &[u8],
+    ) -> Arc<Vec<u8>> {
+        use super::response_encoder::{
+            assemble_packet, build_opt_encoded_record, build_response_flags, ResponseEnvelope,
+        };
+
+        let mut envelope = ResponseEnvelope::default();
+        if let Some(edns) = edns_options {
+            envelope.additional_records.push(build_opt_encoded_record(
+                edns.udp_payload_size,
+                edns.dnssec_ok,
+                crate::edns::EXTENDED_RCODE_NONE,
+            ));
+        }
+        let flags = build_response_flags(true, false, rd, false, false, rcode);
+        let packet = assemble_packet(&envelope, response_id, flags, question);
+        Self::fit_to_transport(
+            response_id,
+            packet,
+            qname,
+            qtype,
+            edns_options,
+            max_size,
+            rd,
+            question,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn build_unsigned_nodata(
         query_id: u16,
         qname: &str,
         qtype: u16,
         soa: Option<&DnsZoneRecord>,
         edns_options: Option<&EdnsOptions>,
+        max_size: usize,
         _negative_cache_ttl: u32,
         rd: bool,
+        origin: &str,
+        question: &[u8],
     ) -> (Arc<Vec<u8>>, EncodeReport) {
         let mut envelope = ResponseEnvelope::default();
         let mut report = EncodeReport::default();
@@ -638,7 +1098,6 @@ impl DnsServer {
                 "Missing SOA record for NODATA response (internal invariant violation), returning SERVFAIL"
             );
             let flags = build_response_flags(true, false, rd, false, false, 2);
-            let question = super::wire::build_question(qname, qtype, 1);
             let has_opt = edns_options.is_some();
             let arcount: u16 = if has_opt { 1 } else { 0 };
             let mut packet = Vec::with_capacity(12 + question.len() + 16);
@@ -648,16 +1107,20 @@ impl DnsServer {
             packet.extend_from_slice(&0u16.to_be_bytes());
             packet.extend_from_slice(&0u16.to_be_bytes());
             packet.extend_from_slice(&arcount.to_be_bytes());
-            packet.extend_from_slice(&question);
+            packet.extend_from_slice(question);
             if let Some(edns) = edns_options {
-                let opt = build_opt_encoded_record(edns.udp_payload_size, false);
+                let opt = build_opt_encoded_record(
+                    edns.udp_payload_size,
+                    edns.dnssec_ok,
+                    crate::edns::EXTENDED_RCODE_NONE,
+                );
                 packet.extend_from_slice(&opt.bytes);
             }
             return (Arc::new(packet), report);
         };
 
         let mut soa_failed = false;
-        match encode_rr(soa_record, None) {
+        match encode_rr(soa_record, origin, None) {
             Ok(mut rec) => {
                 rec.section = DnsSection::Authority;
                 envelope.authority_records.push(rec);
@@ -675,7 +1138,6 @@ impl DnsServer {
 
         if soa_failed {
             let flags = build_response_flags(true, false, rd, false, false, 2);
-            let question = super::wire::build_question(qname, qtype, 1);
             let has_opt = edns_options.is_some();
             let arcount: u16 = if has_opt { 1 } else { 0 };
             let mut packet = Vec::with_capacity(12 + question.len() + 16);
@@ -685,43 +1147,62 @@ impl DnsServer {
             packet.extend_from_slice(&0u16.to_be_bytes());
             packet.extend_from_slice(&0u16.to_be_bytes());
             packet.extend_from_slice(&arcount.to_be_bytes());
-            packet.extend_from_slice(&question);
+            packet.extend_from_slice(question);
             if let Some(edns) = edns_options {
-                let opt = build_opt_encoded_record(edns.udp_payload_size, false);
+                let opt = build_opt_encoded_record(
+                    edns.udp_payload_size,
+                    edns.dnssec_ok,
+                    crate::edns::EXTENDED_RCODE_NONE,
+                );
                 packet.extend_from_slice(&opt.bytes);
             }
             return (Arc::new(packet), report);
         }
 
         if let Some(edns) = edns_options {
-            envelope
-                .additional_records
-                .push(build_opt_encoded_record(edns.udp_payload_size, false));
+            envelope.additional_records.push(build_opt_encoded_record(
+                edns.udp_payload_size,
+                edns.dnssec_ok,
+                crate::edns::EXTENDED_RCODE_NONE,
+            ));
         }
 
         let flags = build_response_flags(true, false, rd, false, false, 0);
 
-        let packet = assemble_packet(&envelope, query_id, flags, qname, qtype);
-        (Arc::new(packet), report)
+        let packet = assemble_packet(&envelope, query_id, flags, question);
+        let packet = Self::fit_to_transport(
+            query_id,
+            packet,
+            qname,
+            qtype,
+            edns_options,
+            max_size,
+            rd,
+            question,
+        );
+        (packet, report)
     }
 
     pub(super) fn build_refused(
         query_id: u16,
-        qname: &str,
-        qtype: u16,
+        _qname: &str,
+        _qtype: u16,
         edns_options: Option<&EdnsOptions>,
+        question: &[u8],
     ) -> (Arc<Vec<u8>>, EncodeReport) {
         let mut envelope = ResponseEnvelope::default();
 
         let flags = build_response_flags(true, false, false, false, false, 5);
 
         if let Some(edns) = edns_options {
-            envelope
-                .additional_records
-                .push(build_opt_encoded_record(edns.udp_payload_size, false));
+            envelope.additional_records.push(build_opt_encoded_record(
+                edns.udp_payload_size,
+                edns.dnssec_ok,
+                crate::edns::EXTENDED_RCODE_NONE,
+            ));
         }
 
-        let packet = assemble_packet(&envelope, query_id, flags, qname, qtype);
+        let packet = assemble_packet(&envelope, query_id, flags, question);
         (Arc::new(packet), EncodeReport::default())
     }
 }
@@ -729,6 +1210,11 @@ impl DnsServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The question section a client for `name`/`qtype` would have sent.
+    fn question(name: &str, qtype: u16) -> Vec<u8> {
+        crate::wire::build_question(name, qtype, 1)
+    }
 
     fn make_record(name: &str, rt: RecordType, value: &str, ttl: u32) -> DnsZoneRecord {
         DnsZoneRecord {
@@ -759,9 +1245,11 @@ mod tests {
             &records,
             false,
             None,
+            512,
             None,
             "",
             true,
+            &question("example.com", 16),
         );
 
         assert!(
@@ -786,16 +1274,16 @@ mod tests {
         // Regression guard: the DNSSEC-bearing NXDOMAIN / NODATA builders
         // assemble their own packets and previously emitted them unbounded, so
         // an NSEC-heavy zone could send a >512-byte datagram with TC=0.
-        let mut nsec = Vec::new();
+        let mut nsec: Vec<Arc<DnsZoneRecord>> = Vec::new();
         for i in 0..40 {
             // TXT encodes cleanly; NSEC rdata needs a real bitmap and is
             // silently skipped by `encode_rr`, which would make this vacuous.
-            nsec.push(make_record(
+            nsec.push(Arc::new(make_record(
                 &format!("n{}.example.com", i),
                 RecordType::TXT,
                 &"x".repeat(60),
                 300,
-            ));
+            )));
         }
         let soa = make_record(
             "example.com",
@@ -810,13 +1298,14 @@ mod tests {
                 "absent.example.com",
                 qtype,
                 &nsec,
-                u16::from(RecordType::TXT),
                 false,
                 None,
+                512,
                 None,
                 "example.com",
                 Some(&soa),
                 false,
+                &question("absent.example.com", qtype),
             );
             assert!(
                 nx.len() <= 512,
@@ -834,13 +1323,14 @@ mod tests {
                 "nokey.example.com",
                 qtype,
                 &nsec,
-                u16::from(RecordType::TXT),
                 false,
                 None,
+                512,
                 None,
                 "example.com",
                 Some(&soa),
                 false,
+                &question("nokey.example.com", qtype),
             );
             assert!(
                 nodata.len() <= 512,
@@ -876,9 +1366,11 @@ mod tests {
             &records,
             false,
             Some(&edns),
+            4096,
             None,
             "",
             true,
+            &question("example.com", 16),
         );
 
         let flags = u16::from_be_bytes([resp[2], resp[3]]);
@@ -915,9 +1407,11 @@ mod tests {
             &records,
             false,
             None,
+            512,
             None,
             "",
             true,
+            &question("example.com", 16),
         );
 
         let id = u16::from_be_bytes([resp[0], resp[1]]);
@@ -944,9 +1438,11 @@ mod tests {
             &records,
             false,
             None,
+            512,
             None,
             "",
             true,
+            &question("example.com", 16),
         );
         let flags_rd = u16::from_be_bytes([resp_rd[2], resp_rd[3]]);
         assert_ne!(
@@ -963,9 +1459,11 @@ mod tests {
             &records,
             false,
             None,
+            512,
             None,
             "",
             false,
+            &question("example.com", 16),
         );
         let flags_nord = u16::from_be_bytes([resp_nord[2], resp_nord[3]]);
         assert_eq!(
@@ -994,9 +1492,11 @@ mod tests {
             &records,
             false,
             None,
+            512,
             None,
             "",
             true,
+            &question("example.com", 16),
         );
         let flags = u16::from_be_bytes([resp[2], resp[3]]);
         assert_ne!(flags & 0x0400, 0, "AA bit must be set (authoritative)");
@@ -1022,9 +1522,11 @@ mod tests {
             &records,
             false,
             None,
+            512,
             None,
             "",
             true,
+            &question("example.com", 16),
         );
         let flags = u16::from_be_bytes([resp[2], resp[3]]);
         let rcode = (flags & 0x000F) as u8;
@@ -1041,8 +1543,11 @@ mod tests {
             15,   // MX
             None, // no SOA
             None,
+            512,
             300,
             true,
+            "example.com",
+            &question("www.example.com", 15),
         );
 
         let flags = u16::from_be_bytes([resp[2], resp[3]]);
@@ -1064,8 +1569,11 @@ mod tests {
             1,    // A
             None, // no SOA
             None,
+            512,
             300,
             true,
+            "example.com",
+            &question("nonexistent.example.com", 1),
         );
 
         let flags = u16::from_be_bytes([resp[2], resp[3]]);
@@ -1098,9 +1606,11 @@ mod tests {
             &records,
             false,
             None,
+            512,
             None,
             "",
             true,
+            &question("_acme-challenge.example.com", 16),
         );
 
         let flags = u16::from_be_bytes([resp[2], resp[3]]);
@@ -1128,9 +1638,11 @@ mod tests {
             &records,
             false,
             None,
+            512,
             None,
             "",
             true,
+            &question("example.com", 1),
         );
 
         assert!(
@@ -1172,9 +1684,11 @@ mod tests {
             &records,
             false,
             Some(&edns),
+            4096,
             None,
             "",
             true,
+            &question("example.com", 16),
         );
 
         // Should be > 512 but <= 4096, with no TC
@@ -1216,9 +1730,11 @@ mod tests {
             &records,
             false,
             None,
+            512,
             None,
             "",
             true,
+            &question("example.com", 16),
         );
 
         // 12-byte header + question section (QNAME + QTYPE(2) + QCLASS(2))

@@ -194,29 +194,46 @@ impl DotServer {
             counter!("synvoid.dot.queries.total").increment(1);
 
             let query_start = std::time::Instant::now();
-            let response = {
-                let dns_server_guard = dns_server.read();
-                let server = match dns_server_guard.as_ref() {
-                    Some(s) => s,
-                    None => {
-                        counter!("synvoid.dot.query.errors").increment(1);
-                        break Err("DNS server not configured".to_string());
-                    }
-                };
 
-                let ctx = server.query_context();
-                if let Some(c) = &ctx.cache {
-                    DnsServer::handle_query_with_cache(
-                        &ctx,
-                        &query_buf,
-                        c,
-                        crate::cache::TransportClass::Tcp,
-                        Some(client_ip),
-                    )
-                } else {
-                    DnsServer::handle_query(&ctx, &query_buf, Some(client_ip))
-                }
+            // Clone the server handle so the read lock is not held across the
+            // await: `parking_lot`'s guard is not `Send`, and every listener
+            // runs its connection in a spawned task.
+            let server = {
+                let dns_server_guard = dns_server.read();
+                dns_server_guard.as_ref().cloned()
             };
+            let Some(server) = server else {
+                counter!("synvoid.dot.query.errors").increment(1);
+                break Err("DNS server not configured".to_string());
+            };
+            let ctx = server.query_context();
+
+            // One admission gate for every transport. DoT never bypasses the
+            // validator, firewall, or rate limiter (D12b).
+            let admitted = match crate::server::admit(
+                &query_buf,
+                client_ip,
+                crate::server::TransportKind::Tcp,
+                &ctx,
+            ) {
+                crate::server::Admission::Allow(admitted) => admitted,
+                crate::server::Admission::Reply(response) => {
+                    let response_len = response.len() as u16;
+                    if let Err(e) = tls_stream.write_all(&response_len.to_be_bytes()).await {
+                        break Err(format!("Failed to send response length: {}", e));
+                    }
+                    if let Err(e) = tls_stream.write_all(&response).await {
+                        break Err(format!("Failed to send response: {}", e));
+                    }
+                    continue;
+                }
+                // A dropped packet gets no DNS response; close the stream so
+                // the client can observe that rather than wait for a timeout.
+                crate::server::Admission::Drop => break Ok(()),
+            };
+
+            let response =
+                DnsServer::serve_admitted(&ctx, &admitted, &query_buf, Some(client_ip)).await;
 
             match response {
                 Some(resp) => {

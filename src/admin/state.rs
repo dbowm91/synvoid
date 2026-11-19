@@ -278,6 +278,14 @@ pub struct AdminState {
     pub audit: AuditState,
     pub config_versions: ConfigVersionManager,
     pub secure_cookie: bool,
+    /// Live DNS health checker, when the worker built a DNS server.
+    ///
+    /// `/health` reports `dns.capabilities` from this handle. It is the live
+    /// checker, not a snapshot: the DNS runtime updates it as listeners bind
+    /// and handlers attach, so the endpoint always answers for the current
+    /// process.
+    #[cfg(feature = "dns")]
+    dns_health: Arc<RwLock<Option<Arc<crate::dns::health::DnsHealthChecker>>>>,
 }
 
 #[derive(Clone)]
@@ -394,7 +402,25 @@ impl AdminState {
             audit: AuditState::new(),
             config_versions: ConfigVersionManager::new(std::path::PathBuf::new()),
             secure_cookie: true,
+            #[cfg(feature = "dns")]
+            dns_health: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Attach the live DNS health checker that `/health` reports from.
+    ///
+    /// Composition calls this after building the router state and before the
+    /// admin listener starts. The handle is the DNS server's own checker, so
+    /// realization updates after startup are visible without re-wiring.
+    #[cfg(feature = "dns")]
+    pub fn set_dns_health(&self, checker: Arc<crate::dns::health::DnsHealthChecker>) {
+        *self.dns_health.write() = Some(checker);
+    }
+
+    /// The attached DNS health checker, if this worker built a DNS server.
+    #[cfg(feature = "dns")]
+    pub fn dns_health(&self) -> Option<Arc<crate::dns::health::DnsHealthChecker>> {
+        self.dns_health.read().clone()
     }
 
     pub fn with_secure_cookie(mut self, secure: bool) -> Self {

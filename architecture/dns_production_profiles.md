@@ -629,7 +629,7 @@ idle_timeout_secs = 30
 
 ### Verification
 
-Internal Rust integration tests (`encrypted_transport`, `dot`, `doh`, `doq`) verify wire format parsing, config roundtrip, TLS cert configuration, and transport class cache namespace separation. The `dns_interop_encrypted` test suite covers additional config validation (disabled-by-default, cert path validation). **No external client live-wire tests** (`kdig`, `khost`, `ldns`) are run in CI. The Beta label reflects internal test coverage only for encrypted mode.
+Internal Rust integration tests (`encrypted_transport`, `dot`, `doh`, `doq`) verify wire format parsing, config roundtrip, TLS cert configuration, and transport class cache namespace separation. The persisted-schema lane moved with the schema to `synvoid-config` as `encrypted_transport_schema` (phase 128). **No external client live-wire tests** (`kdig`, `khost`, `ldns`) are run in CI. The Beta label reflects internal test coverage only for encrypted mode.
 
 ```bash
 # Encrypted transport tests
@@ -638,8 +638,8 @@ cargo test -p synvoid-dns -- dot
 cargo test -p synvoid-dns -- doh
 cargo test -p synvoid-dns -- doq
 
-# Interop
-cargo test -p synvoid-dns --test dns_interop_encrypted
+# Interop (schema moved with the owning crate in phase 128)
+cargo test -p synvoid-config --test encrypted_transport_schema
 
 # Transport class separation
 cargo test -p synvoid-dns -- transport
@@ -723,7 +723,7 @@ The following features exist in config schema but are **not implemented or not w
 | **Anycast** | Feature gate only, not consumed | Platform-specific, not wired | Future |
 | **DNS Padding** | Struct exists in `edns.rs`, not wired | Not connected to query path | Future |
 | **QNAME Privacy** | `sanitize_qname()` exists, not wired | Not connected to query path | Future |
-| **Custom Trust Anchors** | Config fields present, not consumed | `TrustAnchorManager` exists but config not wired | Future |
+| **Custom Trust Anchors** | Config fields parse, activation rejected | RFC 5011 state machine deleted (T5); static file is the only source | Removed |
 | **HSM Integration** | Config field exists, not consumed | `hsm.rs` module exists but not wired | Future |
 | **Firewall Rebinding Protection** | Partially implemented | `rebinding_protection()` exists, not wired | Future |
 | **Firewall Default Action** | Config field exists, not consumed | Not implemented | Future |
@@ -811,8 +811,8 @@ cargo test -p synvoid-dns --test verification_gate                              
 | **Internal Recursive** | `dns_recursive_isolation`, `dns_config_fidelity`, `configured_bind_addr`, `dns_interop_recursive` | Not run in CI — requires local `dig`/`delv` | `cache_bench`, `wire_bench` | Custom Trust Anchors, HSM Integration |
 | **Transfer-Enabled Primary** | `axfr_tcp_only`, `axfr_disabled_by_default`, `ixfr_history`, `store_volatile`, `store_atomic_write`, `tsig_success_fixtures`, `ixfr_record_delta`, `dns_interop_transfers`, `control_plane_authorization`, `control_plane_cache_completion`, `notify_behavior`, `update_authorized_semantics` | Not run in CI — requires local `dig` with TSIG | `cache_bench`, `wire_bench`, `zone_bench` | IXFR Config Toggle, IXFR Fallback to AXFR, Persistent TCP Pipelining |
 | **Transfer-Enabled Secondary** | `tsig_success_fixtures`, `ixfr_record_delta`, `dns_interop_transfers`, `cache_invalidation_axfr`, `control_plane_cache_completion` | Not run in CI — requires primary+secondary pair | `cache_bench`, `wire_bench` | No passive-listener harness, Persistent TCP Pipelining |
-| **DNSSEC-Signed Authoritative** | `dnssec_live_signing`, `dnssec_known_vectors`, `dns_interop_dnssec` | Not run in CI — requires `delv`, `ldns-verify-zone`, `named-checkzone` | `cache_bench`, `wire_bench`, `zone_bench` | External DNSSEC Tooling, NSEC3 Closest-Encloser Proofs, Bailiwick Enforcement |
-| **Encrypted Transport** | `encrypted_transport`, `dot`, `doh`, `doq`, `dns_interop_encrypted`, `transport` | Not run in CI — requires `kdig`, `khost`, `ldns` | `wire_bench` | DoQ bind_address hardcoded, EDNS Keepalive, DNS Padding, QNAME Privacy |
+| **DNSSEC-Signed Authoritative** | `dnssec_live_signing`, `dnssec_known_vectors`, `dnssec_signature_contract`, `dnssec_denial_contract`, `dns_interop_dnssec` | In CI: in-process signature/proof verification. `delv`/`ldns-verify-zone`/`named-checkzone` remain an opt-in external lane (`scripts/dns/conformance.sh`, `dns_external_interop`) | `cache_bench`, `wire_bench`, `zone_bench` | External DNSSEC Tooling (opt-in), NSEC3 Opt-Out referral response |
+| **Encrypted Transport** | `encrypted_transport`, `dot`, `doh`, `doq`, `transport` | Not run in CI — requires `kdig`, `khost`, `ldns` | `wire_bench` | DoQ bind_address hardcoded, EDNS Keepalive, DNS Padding, QNAME Privacy |
 | **Full Mesh DNS** | `mesh_forced_cleanup` (in synvoid-mesh), `mesh_task_ownership_guard`, `worker_mesh_supervision_boundary_guard`, `composition_root_behavioral` | Not run in CI — requires multi-node mesh | `cache_bench`, `wire_bench` | Experimental — may change without notice |
 
 **Total cells**: 32 (8 profiles × 4 columns)

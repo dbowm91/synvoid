@@ -69,6 +69,20 @@ pub enum RecursiveUpstreamProvider {
     GlobalNodes,
 }
 
+impl RecursiveUpstreamProvider {
+    /// The persisted spelling of this provider (`dns.recursive.upstream_provider`).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Google => "google",
+            Self::Cloudflare => "cloudflare",
+            Self::Custom => "custom",
+            Self::Recursive => "recursive",
+            Self::GlobalNodes => "globalnodes",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct RecursiveUpstreamServer {
@@ -208,6 +222,14 @@ pub struct RecursiveDnsConfig {
     #[serde(default = "default_recursive_true")]
     pub dnssec_validation: bool,
 
+    /// Accept `dnssec_validation = true` on a forwarder, where validation is
+    /// performed by the upstream server rather than locally.
+    ///
+    /// Without this, requesting validation on a forwarder provider is a
+    /// startup error: the resolver would claim a guarantee it does not provide.
+    #[serde(default)]
+    pub allow_unvalidated_forwarding: bool,
+
     #[serde(default = "default_recursive_true")]
     pub qname_minimization: bool,
 
@@ -333,6 +355,7 @@ impl Default for RecursiveDnsConfig {
             upstream_servers: Vec::new(),
             cache: RecursiveCacheConfig::default(),
             dnssec_validation: true,
+            allow_unvalidated_forwarding: false,
             qname_minimization: true,
             query_timeout_secs: default_recursive_query_timeout(),
             max_concurrent_queries: default_recursive_max_concurrent_queries(),
@@ -457,7 +480,28 @@ impl RecursiveDnsConfig {
         // authoritative one (default_action/max_rules/rebinding unwired).
         self.firewall.validate_at("dns.recursive.firewall")?;
 
+        // A forwarder cannot validate locally. Asking for validation there used
+        // to log a warning and then claim the guarantee anyway; it is now a
+        // configuration error unless the operator accepts delegated validation.
+        if self.dnssec_validation
+            && !self.provider_validates_locally()
+            && !self.allow_unvalidated_forwarding
+        {
+            return Err(DnsConfigError::InvalidRecursive(format!(
+                "dns.recursive.dnssec_validation = true, but upstream_provider = '{}' performs no \
+                 local DNSSEC validation. Set dns.recursive.allow_unvalidated_forwarding = true to \
+                 accept validation delegated to the upstream, or select upstream_provider = \
+                 'recursive' for local validation.",
+                self.upstream_provider.as_str()
+            )));
+        }
+
         Ok(())
+    }
+
+    /// True when the selected provider is the local validating recursor.
+    pub fn provider_validates_locally(&self) -> bool {
+        matches!(self.upstream_provider, RecursiveUpstreamProvider::Recursive)
     }
 
     pub fn upstream_ips(&self) -> Vec<std::net::IpAddr> {

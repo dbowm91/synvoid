@@ -34,88 +34,19 @@
 
 mod support;
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use synvoid_dns::mesh_sync::dht_capability::{
-    AdvertisedAnycastNode, AdvertisedAnycastRecord, AdvertisedDomainRegistration, DhtGlobalLocator,
-    DhtGlobalPeer, DhtRecordStore,
+    AdvertisedAnycastNode, AdvertisedAnycastRecord, DhtGlobalLocator, DhtGlobalPeer, DhtRecordStore,
 };
 use synvoid_dns::mesh_sync::MeshDnsRegistry;
 use synvoid_dns::server::DnsServer;
 
-// ── doubles ──────────────────────────────────────────────────────────────────
+use support::mesh_dht::CountingDht;
 
-/// A DHT that answers from fixed tables and counts calls, so a test can prove
-/// the registry reached the capability rather than merely holding a handle.
-struct CountingDht {
-    nodes: Vec<AdvertisedAnycastNode>,
-    authenticity_calls: AtomicUsize,
-    store_calls: AtomicUsize,
-}
-
-impl CountingDht {
-    fn new(nodes: Vec<AdvertisedAnycastNode>) -> Self {
-        Self {
-            nodes,
-            authenticity_calls: AtomicUsize::new(0),
-            store_calls: AtomicUsize::new(0),
-        }
-    }
-}
-
-impl DhtRecordStore for CountingDht {
-    fn all_dns_domain_registrations(&self) -> Vec<AdvertisedDomainRegistration> {
-        Vec::new()
-    }
-
-    fn all_anycast_advertisements(&self) -> Vec<AdvertisedAnycastRecord> {
-        Vec::new()
-    }
-
-    fn anycast_nodes_for_zone(&self, zone: &str) -> Vec<AdvertisedAnycastNode> {
-        self.nodes
-            .iter()
-            .filter(|node| node.dns_zones.iter().any(|z| z == zone))
-            .cloned()
-            .collect()
-    }
-
-    fn is_anycast_advertisement_authentic(&self, advertisement: &AdvertisedAnycastRecord) -> bool {
-        self.authenticity_calls.fetch_add(1, Ordering::SeqCst);
-        // Mirrors the provider adapter: an unsigned advertisement is not
-        // authenticated, and the question is answered provider-side.
-        advertisement.signer_public_key.is_some() && !advertisement.signature.is_empty()
-    }
-
-    fn store_dns_domain_registration(
-        &self,
-        _domain: String,
-        _origin_node_id: String,
-        _ip_addresses: Vec<String>,
-        _ttl_seconds: u64,
-    ) -> bool {
-        self.store_calls.fetch_add(1, Ordering::SeqCst);
-        true
-    }
-
-    fn store_anycast_node(
-        &self,
-        _node_id: String,
-        _anycast_ips: Vec<String>,
-        _geo: Option<String>,
-        _capacity: u32,
-        _healthy: bool,
-        _dns_zones: Vec<String>,
-    ) -> bool {
-        self.store_calls.fetch_add(1, Ordering::SeqCst);
-        true
-    }
-
-    fn remove_anycast_node(&self, _node_id: &str) -> bool {
-        true
-    }
-}
+// The DHT double is shared with `dns_mesh_trust_contract.rs`; Phase 08 added
+// the domain-registration half and a real Ed25519 verifier to it. Keeping one
+// copy is what stops the two mesh suites from drifting apart.
 
 struct FixedLocator;
 
@@ -254,7 +185,7 @@ async fn advertisement_authenticity_is_asked_of_the_capability() {
     );
 
     assert!(
-        dht.authenticity_calls.load(Ordering::SeqCst) >= 2,
+        dht.authenticity_calls() >= 2,
         "the decision must have been delegated to the capability; a local \
          decision would leave the counter at zero"
     );

@@ -53,6 +53,18 @@ pub async fn get_main_config(
 
     redact_admin_token(&mut config_value);
 
+    // `/config/main` embeds the DNS section, so it must apply the same secret
+    // redaction as `/config/dns`: a TSIG `secret_base64` or an HSM PIN must
+    // not become readable by asking the parent endpoint.
+    #[cfg(feature = "dns")]
+    {
+        let redacted =
+            redacted_dns_config(&config.main.dns).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        if let Some(dns) = config_value.get_mut("dns") {
+            *dns = redacted;
+        }
+    }
+
     Ok(Json(MainConfigResponse {
         config: config_value,
     }))
@@ -1714,16 +1726,139 @@ pub async fn update_ip_feeds_config(
 
 // --- DNS config (feature-gated) ---
 
+/// A TSIG key as `GET /config/dns` exposes it.
+///
+/// Deliberately not `TsigKeyConfig`: the response carries no secret bytes at
+/// all, only whether one is stored. The write-only counterpart is
+/// `TsigKeyWriteOnly`, accepted by `PUT /config/dns`.
+#[cfg(feature = "dns")]
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RedactedTsigKey {
+    pub name: String,
+    pub algorithm: crate::config::dns::TsigAlgorithm,
+    pub secret_set: bool,
+}
+
 #[cfg(feature = "dns")]
 #[derive(Debug, Serialize, ToSchema)]
 pub struct DnsConfigResponse {
+    /// The persisted DNS configuration with every TSIG secret removed.
+    ///
+    /// `dnssec.tsig_keys[]` carries `{ name, algorithm, secret_set }`; it never
+    /// carries `secret_base64`.
     pub config: serde_json::Value,
 }
 
+/// Write-only request body for `PUT /config/dns`.
+///
+/// `config.dnssec.tsig_keys[].secret_base64` is accepted here and only here:
+/// an omitted field keeps the stored secret, an explicit empty string clears
+/// it. This is a distinct type from [`DnsConfigResponse`], which has no
+/// secret field to send back.
 #[cfg(feature = "dns")]
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateDnsConfigRequest {
     pub config: serde_json::Value,
+}
+
+/// The only piece of the request the redacted DTO cannot round-trip.
+#[cfg(feature = "dns")]
+#[derive(Debug, Default, Deserialize)]
+struct DnsWriteOnlyPatch {
+    #[serde(default)]
+    dnssec: DnssecWriteOnlyPatch,
+}
+
+#[cfg(feature = "dns")]
+#[derive(Debug, Default, Deserialize)]
+struct DnssecWriteOnlyPatch {
+    #[serde(default)]
+    tsig_keys: Vec<TsigKeyWriteOnly>,
+    #[serde(default)]
+    hsm: HsmWriteOnlyPatch,
+}
+
+#[cfg(feature = "dns")]
+#[derive(Debug, Default, Deserialize)]
+struct HsmWriteOnlyPatch {
+    /// `None` when the PIN is absent or `null` (keep); `Some("")` clears.
+    #[serde(default)]
+    pin: Option<String>,
+}
+
+#[cfg(feature = "dns")]
+#[derive(Debug, Deserialize)]
+struct TsigKeyWriteOnly {
+    /// `None` when the key is absent or `null` (keep); `Some("")` clears.
+    #[serde(default)]
+    secret_base64: Option<String>,
+}
+
+/// Build the redacted response view of a DNS configuration.
+#[cfg(feature = "dns")]
+fn redacted_dns_config(
+    config: &crate::config::dns::DnsConfig,
+) -> Result<serde_json::Value, serde_json::Error> {
+    let redacted_keys: Vec<RedactedTsigKey> = config
+        .dnssec
+        .tsig_keys
+        .iter()
+        .map(|key| RedactedTsigKey {
+            name: key.name.clone(),
+            algorithm: key.algorithm,
+            secret_set: !key.secret_base64.is_empty(),
+        })
+        .collect();
+
+    let mut value = serde_json::to_value(config)?;
+    if let Some(dnssec) = value.get_mut("dnssec").and_then(|v| v.as_object_mut()) {
+        // Replace the whole array, so no field of `TsigKeyConfig` (including
+        // any added later) can leak by being copied through.
+        dnssec.insert(
+            "tsig_keys".to_string(),
+            serde_json::to_value(redacted_keys)?,
+        );
+        // The HSM PIN is a credential. A read-only boolean says whether one is
+        // stored; the value itself is write-only (see `HsmWriteOnlyPatch`).
+        if let Some(hsm) = dnssec.get_mut("hsm").and_then(|v| v.as_object_mut()) {
+            let pin_set = config
+                .dnssec
+                .hsm
+                .pin
+                .as_deref()
+                .is_some_and(|pin| !pin.is_empty());
+            hsm.remove("pin");
+            hsm.insert("pin_set".to_string(), serde_json::Value::Bool(pin_set));
+        }
+    }
+    Ok(value)
+}
+
+/// Apply the write-only secret semantics: omitted keeps, empty clears.
+#[cfg(feature = "dns")]
+fn apply_tsig_write_only(
+    incoming: &mut [crate::config::dns::TsigKeyConfig],
+    patch: &[TsigKeyWriteOnly],
+    previous: &[crate::config::dns::TsigKeyConfig],
+) {
+    for (index, key) in incoming.iter_mut().enumerate() {
+        match patch
+            .get(index)
+            .and_then(|entry| entry.secret_base64.as_deref())
+        {
+            Some(secret) => key.secret_base64 = secret.to_string(),
+            None => {
+                // Omitted: keep the stored secret for the same key name. A new
+                // key with no secret stays empty (it cannot authenticate, and
+                // the runtime conversion says so explicitly).
+                if let Some(previous_key) =
+                    previous.iter().find(|existing| existing.name == key.name)
+                {
+                    key.secret_base64 = previous_key.secret_base64.clone();
+                }
+            }
+        }
+    }
 }
 
 #[cfg(feature = "dns")]
@@ -1731,7 +1866,7 @@ pub struct UpdateDnsConfigRequest {
     get,
     path = "/config/dns",
     responses(
-        (status = 200, description = "DNS configuration", body = DnsConfigResponse),
+        (status = 200, description = "DNS configuration (secrets redacted)", body = DnsConfigResponse),
         (status = 401, description = "Unauthorized"),
         (status = 500, description = "Internal server error")
     ),
@@ -1743,7 +1878,7 @@ pub async fn get_dns_config(
 ) -> Result<Json<DnsConfigResponse>, StatusCode> {
     let config = state.process.config.read().await;
     Ok(Json(DnsConfigResponse {
-        config: serde_json::to_value(&config.main.dns).map_err(|e| {
+        config: redacted_dns_config(&config.main.dns).map_err(|e| {
             tracing::error!("Failed to serialize DNS config: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?,
@@ -1768,8 +1903,15 @@ pub async fn update_dns_config(
     _auth: OptionalAuth,
     Json(req): Json<UpdateDnsConfigRequest>,
 ) -> Result<Json<AdminMutationResult<String>>, StatusCode> {
-    let dns_config: crate::config::dns::DnsConfig =
-        serde_json::from_value(req.config).map_err(|e| {
+    // Read the write-only secret before the DTO strips it.
+    let write_only_patch: DnsWriteOnlyPatch =
+        serde_json::from_value(req.config.clone()).map_err(|e| {
+            tracing::error!("Failed to parse DNS config write-only fields: {}", e);
+            StatusCode::BAD_REQUEST
+        })?;
+
+    let mut dns_config: crate::config::dns::DnsConfig = serde_json::from_value(req.config)
+        .map_err(|e| {
             tracing::error!("Failed to parse DNS config: {}", e);
             StatusCode::BAD_REQUEST
         })?;
@@ -1784,9 +1926,24 @@ pub async fn update_dns_config(
     let _guard = state.metrics.config_write_lock.write().await;
     {
         let mut config = state.process.config.write().await;
+        let previous_keys = config.main.dns.dnssec.tsig_keys.clone();
+        let previous_pin = config.main.dns.dnssec.hsm.pin.clone();
+        apply_tsig_write_only(
+            &mut dns_config.dnssec.tsig_keys,
+            &write_only_patch.dnssec.tsig_keys,
+            &previous_keys,
+        );
+        // The HSM PIN is write-only for the same reason as a TSIG secret: a
+        // GET must not return it, and a read-modify-write PUT must not clear
+        // it by omitting the redacted field.
+        dns_config.dnssec.hsm.pin = match write_only_patch.dnssec.hsm.pin.as_deref() {
+            Some("") => None,
+            Some(pin) => Some(pin.to_string()),
+            None => previous_pin,
+        };
         config.main.dns = dns_config;
     }
-    persist_with_snapshot(&state, "TLS config updated").await?;
+    persist_with_snapshot(&state, "DNS config updated").await?;
     Ok(Json(config_mutation("DNS config updated.")))
 }
 

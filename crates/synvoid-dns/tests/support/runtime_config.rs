@@ -51,6 +51,7 @@ pub fn authoritative_runtime() -> AuthoritativeRuntimeConfig {
         },
         limits: LimitsRuntimeConfig {
             max_tcp_connections: 100,
+            max_encrypted_connections: 100,
             max_concurrent_queries: 1000,
             max_query_size: 65_535,
             max_response_size: 65_535,
@@ -101,6 +102,7 @@ pub fn authoritative_runtime() -> AuthoritativeRuntimeConfig {
             ixfr_fallback_to_axfr: true,
             require_tsig: false,
         },
+        require_cookie: false,
         anycast: AnycastRuntimeConfig { enabled: false },
     }
 }

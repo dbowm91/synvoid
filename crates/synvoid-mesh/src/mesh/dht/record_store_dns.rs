@@ -1,5 +1,5 @@
 use super::*;
-use crate::dht::{AnycastNode, DnsDomainRegistration};
+use crate::dht::{AnycastNode, DnsDomainRegistration, DnsDomainRegistrationRecord};
 
 impl RecordStoreManager {
     pub fn store_dns_domain_registration(
@@ -91,7 +91,7 @@ impl RecordStoreManager {
         synvoid_utils::serialization::deserialize::<DnsDomainRegistration>(&record.value).ok()
     }
 
-    pub fn get_all_dns_domain_registrations(&self) -> Vec<(String, String, Vec<String>)> {
+    pub fn get_all_dns_domain_registrations(&self) -> Vec<DnsDomainRegistrationRecord> {
         if !self.config.enabled || !self.is_global_node() {
             return Vec::new();
         }
@@ -104,7 +104,15 @@ impl RecordStoreManager {
                 if let Ok(value) = synvoid_utils::serialization::deserialize::<DnsDomainRegistration>(
                     &entry.record.value,
                 ) {
-                    registrations.push((value.domain, value.origin_node_id, value.ip_addresses));
+                    registrations.push(DnsDomainRegistrationRecord {
+                        domain: value.domain,
+                        origin_node_id: value.origin_node_id,
+                        ip_addresses: value.ip_addresses,
+                        publisher_id: entry.record.source_node_id.clone(),
+                        signature: entry.record.signature.clone(),
+                        created_at: entry.record.timestamp,
+                        ttl_seconds: entry.record.ttl_seconds,
+                    });
                 }
             }
         }

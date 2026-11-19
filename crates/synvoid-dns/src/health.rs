@@ -37,6 +37,8 @@ pub struct DnsHealthStatus {
     pub encrypted_transport_state: EncryptedTransportHealth,
     /// Transfer/update policy state.
     pub transfer_update_state: TransferUpdateHealth,
+    /// Realized-vs-requested capability matrix.
+    pub capabilities: DnsCapabilities,
     /// Uptime in seconds since last reset.
     pub uptime_seconds: u64,
     /// Timestamp of last zone load/reload attempt.
@@ -52,11 +54,29 @@ pub enum RecursiveHealth {
     Disabled,
 }
 
+/// How recursive answers are DNSSEC-validated, as actually realized.
+///
+/// A forwarder that is only trusted to validate is `delegated`, never
+/// `enabled`: reporting local validation for a resolver that performs none is
+/// the health-truth failure this field exists to prevent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DnssecValidationHealth {
+    /// The recursor validates every answer locally.
+    Enabled,
+    /// Validation is delegated to the upstream forwarder.
+    Delegated,
+    /// Recursive validation is not configured (or recursion is off).
+    Disabled,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct DnssecHealth {
     pub keys_loaded: u64,
     pub last_key_rotation: Option<u64>,
     pub signing_enabled: bool,
+    /// Realized recursive validation state, not the configured intent.
+    pub validation: DnssecValidationHealth,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -75,6 +95,95 @@ pub struct TransferUpdateHealth {
     pub tsig_required: bool,
 }
 
+/// The DNS capabilities `/health` reports one by one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DnsCapability {
+    Axfr,
+    Ixfr,
+    Update,
+    Notify,
+    DnssecSigning,
+    Recursive,
+    Dot,
+    Doh,
+    Doq,
+}
+
+impl DnsCapability {
+    /// Number of capabilities, kept in one place so the cells array and the
+    /// serialized struct cannot drift.
+    pub const COUNT: usize = 9;
+
+    fn index(self) -> usize {
+        match self {
+            Self::Axfr => 0,
+            Self::Ixfr => 1,
+            Self::Update => 2,
+            Self::Notify => 3,
+            Self::DnssecSigning => 4,
+            Self::Recursive => 5,
+            Self::Dot => 6,
+            Self::Doh => 7,
+            Self::Doq => 8,
+        }
+    }
+}
+
+/// A capability's realized state against what configuration asked for.
+///
+/// The pair exists so a mismatch is visible rather than inferred: `realized`
+/// is set only by the code that built the handler, bound the listener, or
+/// loaded the key, while `config_requested` is the config value the runtime
+/// received. Neither is derived from the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct CapabilityRealization {
+    pub realized: bool,
+    pub config_requested: bool,
+}
+
+/// The `dns.capabilities` block of `/health`.
+#[derive(Debug, Clone, Serialize)]
+pub struct DnsCapabilities {
+    pub axfr: CapabilityRealization,
+    pub ixfr: CapabilityRealization,
+    pub update: CapabilityRealization,
+    pub notify: CapabilityRealization,
+    pub dnssec_signing: CapabilityRealization,
+    pub recursive: CapabilityRealization,
+    pub dot: CapabilityRealization,
+    pub doh: CapabilityRealization,
+    pub doq: CapabilityRealization,
+}
+
+struct CapabilityCells {
+    realized: [AtomicBool; DnsCapability::COUNT],
+    config_requested: [AtomicBool; DnsCapability::COUNT],
+}
+
+impl CapabilityCells {
+    fn new() -> Self {
+        Self {
+            realized: std::array::from_fn(|_| AtomicBool::new(false)),
+            config_requested: std::array::from_fn(|_| AtomicBool::new(false)),
+        }
+    }
+
+    fn set_realized(&self, capability: DnsCapability, realized: bool) {
+        self.realized[capability.index()].store(realized, Ordering::Relaxed);
+    }
+
+    fn set_config_requested(&self, capability: DnsCapability, requested: bool) {
+        self.config_requested[capability.index()].store(requested, Ordering::Relaxed);
+    }
+
+    fn get(&self, capability: DnsCapability) -> CapabilityRealization {
+        CapabilityRealization {
+            realized: self.realized[capability.index()].load(Ordering::Relaxed),
+            config_requested: self.config_requested[capability.index()].load(Ordering::Relaxed),
+        }
+    }
+}
+
 /// Thread-safe health checker for the DNS server.
 pub struct DnsHealthChecker {
     listener_bound: AtomicBool,
@@ -86,16 +195,14 @@ pub struct DnsHealthChecker {
     circuit_breaker_open: AtomicBool,
     cache_operational: AtomicBool,
     dnssec_keys_loaded: AtomicU64,
-    dnssec_signing_enabled: AtomicBool,
+    dnssec_validation: RwLock<DnssecValidationHealth>,
     last_key_rotation: AtomicU64,
-    dot_enabled: AtomicBool,
-    doh_enabled: AtomicBool,
-    doq_enabled: AtomicBool,
     cert_valid: AtomicBool,
-    axfr_enabled: AtomicBool,
-    ixfr_enabled: AtomicBool,
-    update_enabled: AtomicBool,
     tsig_required: AtomicBool,
+    /// Single source of truth for every capability flag. The legacy named
+    /// getters read the same cells, so `transfer_update_state` and
+    /// `capabilities` cannot disagree.
+    capabilities: CapabilityCells,
     last_zone_load_time: AtomicU64,
     last_zone_load_error: RwLock<Option<String>>,
     start_time: Instant,
@@ -113,16 +220,11 @@ impl DnsHealthChecker {
             circuit_breaker_open: AtomicBool::new(false),
             cache_operational: AtomicBool::new(false),
             dnssec_keys_loaded: AtomicU64::new(0),
-            dnssec_signing_enabled: AtomicBool::new(false),
+            dnssec_validation: RwLock::new(DnssecValidationHealth::Disabled),
             last_key_rotation: AtomicU64::new(0),
-            dot_enabled: AtomicBool::new(false),
-            doh_enabled: AtomicBool::new(false),
-            doq_enabled: AtomicBool::new(false),
             cert_valid: AtomicBool::new(false),
-            axfr_enabled: AtomicBool::new(false),
-            ixfr_enabled: AtomicBool::new(false),
-            update_enabled: AtomicBool::new(false),
             tsig_required: AtomicBool::new(false),
+            capabilities: CapabilityCells::new(),
             last_zone_load_time: AtomicU64::new(0),
             last_zone_load_error: RwLock::new(None),
             start_time: Instant::now(),
@@ -143,16 +245,22 @@ impl DnsHealthChecker {
         self.recursive_healthy.store(true, Ordering::Relaxed);
         self.recursive_degraded.store(false, Ordering::Relaxed);
         self.recursive_disabled.store(false, Ordering::Relaxed);
+        self.capabilities
+            .set_realized(DnsCapability::Recursive, true);
     }
     pub fn set_recursive_degraded(&self) {
         self.recursive_degraded.store(true, Ordering::Relaxed);
         self.recursive_healthy.store(false, Ordering::Relaxed);
         self.recursive_disabled.store(false, Ordering::Relaxed);
+        self.capabilities
+            .set_realized(DnsCapability::Recursive, false);
     }
     pub fn set_recursive_disabled(&self) {
         self.recursive_disabled.store(true, Ordering::Relaxed);
         self.recursive_healthy.store(false, Ordering::Relaxed);
         self.recursive_degraded.store(false, Ordering::Relaxed);
+        self.capabilities
+            .set_realized(DnsCapability::Recursive, false);
     }
     pub fn set_circuit_breaker_open(&self, open: bool) {
         self.circuit_breaker_open.store(open, Ordering::Relaxed);
@@ -163,33 +271,77 @@ impl DnsHealthChecker {
     pub fn set_dnssec_keys_loaded(&self, count: u64) {
         self.dnssec_keys_loaded.store(count, Ordering::Relaxed);
     }
+    /// Record whether DNSSEC signing is **realized**: at least one loaded zone
+    /// holds a ZSK handle. Config enabling DNSSEC is not evidence of this.
     pub fn set_dnssec_signing_enabled(&self, enabled: bool) {
-        self.dnssec_signing_enabled
-            .store(enabled, Ordering::Relaxed);
+        self.capabilities
+            .set_realized(DnsCapability::DnssecSigning, enabled);
+    }
+    /// Record the realized recursive validation state.
+    pub fn set_dnssec_validation(&self, validation: DnssecValidationHealth) {
+        *self.dnssec_validation.write() = validation;
     }
     pub fn set_last_key_rotation(&self, ts: u64) {
         self.last_key_rotation.store(ts, Ordering::Relaxed);
     }
+    /// Record that the DoT listener is actually bound.
     pub fn set_dot_enabled(&self, enabled: bool) {
-        self.dot_enabled.store(enabled, Ordering::Relaxed);
+        self.capabilities.set_realized(DnsCapability::Dot, enabled);
     }
+    /// Record that the DoH listener is actually bound.
     pub fn set_doh_enabled(&self, enabled: bool) {
-        self.doh_enabled.store(enabled, Ordering::Relaxed);
+        self.capabilities.set_realized(DnsCapability::Doh, enabled);
     }
+    /// Record that the DoQ listener is actually bound.
     pub fn set_doq_enabled(&self, enabled: bool) {
-        self.doq_enabled.store(enabled, Ordering::Relaxed);
+        self.capabilities.set_realized(DnsCapability::Doq, enabled);
     }
     pub fn set_cert_valid(&self, valid: bool) {
         self.cert_valid.store(valid, Ordering::Relaxed);
     }
+    /// Record that an AXFR-capable handler is attached.
     pub fn set_axfr_enabled(&self, enabled: bool) {
-        self.axfr_enabled.store(enabled, Ordering::Relaxed);
+        self.capabilities.set_realized(DnsCapability::Axfr, enabled);
     }
+    /// Record that an IXFR-capable handler is attached.
     pub fn set_ixfr_enabled(&self, enabled: bool) {
-        self.ixfr_enabled.store(enabled, Ordering::Relaxed);
+        self.capabilities.set_realized(DnsCapability::Ixfr, enabled);
     }
+    /// Record that an UPDATE handler is attached.
     pub fn set_update_enabled(&self, enabled: bool) {
-        self.update_enabled.store(enabled, Ordering::Relaxed);
+        self.capabilities
+            .set_realized(DnsCapability::Update, enabled);
+    }
+    /// Record that a NOTIFY handler is attached.
+    pub fn set_notify_enabled(&self, enabled: bool) {
+        self.capabilities
+            .set_realized(DnsCapability::Notify, enabled);
+    }
+    /// Record whether configuration asked for a capability.
+    ///
+    /// Called once from the constructor, where the runtime config is known.
+    /// It never sets `realized`: only the code that built the thing can.
+    pub fn set_capability_config_requested(&self, capability: DnsCapability, requested: bool) {
+        self.capabilities
+            .set_config_requested(capability, requested);
+    }
+    /// One capability's realized-vs-requested pair.
+    pub fn capability(&self, capability: DnsCapability) -> CapabilityRealization {
+        self.capabilities.get(capability)
+    }
+    /// The whole capability matrix.
+    pub fn capabilities(&self) -> DnsCapabilities {
+        DnsCapabilities {
+            axfr: self.capability(DnsCapability::Axfr),
+            ixfr: self.capability(DnsCapability::Ixfr),
+            update: self.capability(DnsCapability::Update),
+            notify: self.capability(DnsCapability::Notify),
+            dnssec_signing: self.capability(DnsCapability::DnssecSigning),
+            recursive: self.capability(DnsCapability::Recursive),
+            dot: self.capability(DnsCapability::Dot),
+            doh: self.capability(DnsCapability::Doh),
+            doq: self.capability(DnsCapability::Doq),
+        }
     }
     pub fn set_tsig_required(&self, required: bool) {
         self.tsig_required.store(required, Ordering::Relaxed);
@@ -263,20 +415,22 @@ impl DnsHealthChecker {
                         None
                     }
                 },
-                signing_enabled: self.dnssec_signing_enabled.load(Ordering::Relaxed),
+                signing_enabled: self.capability(DnsCapability::DnssecSigning).realized,
+                validation: *self.dnssec_validation.read(),
             },
             encrypted_transport_state: EncryptedTransportHealth {
-                dot_enabled: self.dot_enabled.load(Ordering::Relaxed),
-                doh_enabled: self.doh_enabled.load(Ordering::Relaxed),
-                doq_enabled: self.doq_enabled.load(Ordering::Relaxed),
+                dot_enabled: self.capability(DnsCapability::Dot).realized,
+                doh_enabled: self.capability(DnsCapability::Doh).realized,
+                doq_enabled: self.capability(DnsCapability::Doq).realized,
                 cert_valid: cert_ok,
             },
             transfer_update_state: TransferUpdateHealth {
-                axfr_enabled: self.axfr_enabled.load(Ordering::Relaxed),
-                ixfr_enabled: self.ixfr_enabled.load(Ordering::Relaxed),
-                update_enabled: self.update_enabled.load(Ordering::Relaxed),
+                axfr_enabled: self.capability(DnsCapability::Axfr).realized,
+                ixfr_enabled: self.capability(DnsCapability::Ixfr).realized,
+                update_enabled: self.capability(DnsCapability::Update).realized,
                 tsig_required: self.tsig_required.load(Ordering::Relaxed),
             },
+            capabilities: self.capabilities(),
             uptime_seconds: self.start_time.elapsed().as_secs(),
             last_zone_load_time: {
                 let ts = self.last_zone_load_time.load(Ordering::Relaxed);

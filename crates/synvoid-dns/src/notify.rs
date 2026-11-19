@@ -21,7 +21,8 @@ pub struct NotifyHandler {
     config: NotifyConfig,
     notified_secondaries: Arc<RwLock<HashMap<String, u32>>>,
     cache: Option<Arc<DnsCache>>,
-    /// Source IP allowlist for incoming NOTIFY. Empty = allow all.
+    /// Source IP allowlist for incoming NOTIFY. Empty = deny all: a NOTIFY
+    /// owner must be named explicitly (R6).
     source_allowlist: Vec<String>,
     /// Require TSIG for incoming NOTIFY.
     require_tsig: bool,
@@ -73,8 +74,11 @@ impl NotifyHandler {
     }
 
     fn is_source_allowed(&self, client_ip: std::net::IpAddr) -> bool {
+        // Deny-all by default: a NOTIFY is an unauthenticated instruction to
+        // discard cached data, so "nobody configured an allowlist" must not
+        // read as "everyone is a primary".
         if self.source_allowlist.is_empty() {
-            return true;
+            return false;
         }
         for allowed in &self.source_allowlist {
             if allowed == "*" {
@@ -126,6 +130,13 @@ impl NotifyHandler {
             return None;
         }
 
+        // Structural checks and the source allowlist are cheap and run before
+        // the TSIG parser sees the packet.
+        let parsed = ParsedDnsQuery::parse(query).ok()?;
+        if !parsed.is_notify() || parsed.flags.is_response {
+            return None;
+        }
+
         if !self.is_source_allowed(client_ip) {
             tracing::warn!(
                 client_ip = %client_ip,
@@ -134,23 +145,45 @@ impl NotifyHandler {
             return None;
         }
 
-        if self.require_tsig {
-            let parsed_pre = ParsedDnsQuery::parse(query).ok()?;
-            let additional_offset = parsed_pre.question_end;
-            let tsig = crate::tsig::parse_tsig_from_query(query, additional_offset);
-            if tsig.is_none() {
+        // Presence implies verification: a TSIG that is present is verified
+        // even when `require_tsig` is false. A NOTIFY that cannot be
+        // authenticated is answered NOTAUTH (RFC 8945 §5.2).
+        let tsig = match crate::tsig::parse_tsig_from_query(query, parsed.question_end) {
+            Ok(tsig) => tsig,
+            Err(e) => {
+                tracing::warn!(client_ip = %client_ip, error = %e, "NOTIFY denied: malformed TSIG");
+                return Some(build_notify_response(query, wire::UPDATE_RCODE_NOTAUTH));
+            }
+        };
+
+        match tsig {
+            Some(tsig) => match self.tsig_verifier.as_ref() {
+                Some(verifier) => {
+                    if let Err(e) = verifier.verify(query, &tsig) {
+                        tracing::warn!(
+                            client_ip = %client_ip,
+                            error = %e,
+                            "NOTIFY denied: TSIG verification failed"
+                        );
+                        return Some(build_notify_response(query, wire::UPDATE_RCODE_NOTAUTH));
+                    }
+                }
+                None => {
+                    tracing::warn!(
+                        client_ip = %client_ip,
+                        "NOTIFY denied: TSIG present but no verifier configured"
+                    );
+                    return Some(build_notify_response(query, wire::UPDATE_RCODE_NOTAUTH));
+                }
+            },
+            None if self.require_tsig => {
                 tracing::warn!(
                     client_ip = %client_ip,
                     "NOTIFY denied: TSIG required but not present"
                 );
                 return None;
             }
-        }
-
-        let parsed = ParsedDnsQuery::parse(query).ok()?;
-
-        if !parsed.is_notify() || parsed.flags.is_response {
-            return None;
+            None => {}
         }
 
         let zone_name = &parsed.qname;
@@ -161,6 +194,17 @@ impl NotifyHandler {
             zone_name.clone()
         };
 
+        // An unknown zone is not this server's authority: NOTAUTH, and the
+        // cache is not touched (there is nothing to invalidate).
+        if !self.zones.contains_key(&zone_origin) {
+            tracing::debug!(
+                zone = %zone_origin,
+                client_ip = %client_ip,
+                "NOTIFY for unknown zone"
+            );
+            return Some(build_notify_response(query, wire::UPDATE_RCODE_NOTAUTH));
+        }
+
         if self.is_rate_limited(&zone_origin) {
             tracing::debug!(
                 zone = %zone_origin,
@@ -170,24 +214,14 @@ impl NotifyHandler {
             return Some(build_notify_response(query, wire::RCODE_NOERROR));
         }
 
-        let zone = self.zones.get(&zone_origin);
-
-        if zone.is_some() {
-            if let Some(ref cache) = self.cache {
-                cache.invalidate_zone(
-                    &zone_origin,
-                    crate::cache::InvalidationReason::NotifyReceived,
-                );
-            }
+        if let Some(ref cache) = self.cache {
+            cache.invalidate_zone(
+                &zone_origin,
+                crate::cache::InvalidationReason::NotifyReceived,
+            );
         }
 
-        let rcode = if zone.is_some() {
-            wire::RCODE_NOERROR
-        } else {
-            wire::RCODE_NXDOMAIN
-        };
-
-        Some(build_notify_response(query, rcode))
+        Some(build_notify_response(query, wire::RCODE_NOERROR))
     }
 
     pub fn notify_secondaries(&self, zone_origin: &str, new_serial: u32) {
@@ -363,16 +397,16 @@ mod tests {
     }
 
     #[test]
-    fn test_notify_source_allowlist_empty_allows_all() {
+    fn test_notify_source_allowlist_empty_denies_all() {
         let zones = Arc::new(ShardedZoneStore::new());
         let config = NotifyConfig {
             enabled: true,
             also_notify: vec![],
         };
         let handler = NotifyHandler::new(zones, config);
-        // Empty allowlist = allow all
-        assert!(handler.is_source_allowed("192.168.1.1".parse().unwrap()));
-        assert!(handler.is_source_allowed("10.0.0.1".parse().unwrap()));
+        // Empty allowlist = deny all (R6): a primary must be named.
+        assert!(!handler.is_source_allowed("192.168.1.1".parse().unwrap()));
+        assert!(!handler.is_source_allowed("10.0.0.1".parse().unwrap()));
     }
 
     #[test]

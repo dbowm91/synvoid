@@ -4,7 +4,7 @@ proptest! {
     /// DNS encode_name → parse_query_name roundtrip identity
     #[test]
     fn dns_encode_parse_roundtrip(name in "[a-z]{1,10}(\\.[a-z]{1,10}){0,3}") {
-        let encoded = synvoid_dns::wire::encode_name(&name);
+        let encoded = synvoid_dns::wire::encode_name(&name).unwrap();
         let parsed = synvoid_dns::wire::parse_query_name(&encoded, 0);
         prop_assert_eq!(parsed, Some(name.to_lowercase()));
     }
@@ -64,7 +64,7 @@ proptest! {
     /// DNS wire encode_name produces null-terminated output
     #[test]
     fn dns_encode_name_terminates(name in "[a-z]{1,5}(\\.[a-z]{1,5}){0,2}") {
-        let encoded = synvoid_dns::wire::encode_name(&name);
+        let encoded = synvoid_dns::wire::encode_name(&name).unwrap();
         prop_assert!(!encoded.is_empty());
         prop_assert_eq!(*encoded.last().unwrap(), 0u8);
     }

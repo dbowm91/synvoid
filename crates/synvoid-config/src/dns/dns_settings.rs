@@ -43,6 +43,14 @@ pub struct DnsSettingsConfig {
     #[serde(default = "default_require_tsig")]
     pub require_tsig: bool,
 
+    /// Require a valid RFC 7873 server cookie on UDP queries.
+    ///
+    /// Default `false`. When enabled, a UDP query without a valid server
+    /// cookie is answered BADCOOKIE with a fresh cookie; DoH/DoT/DoQ are
+    /// exempt because a spoofed source cannot complete the handshake.
+    #[serde(default)]
+    pub require_cookie: bool,
+
     #[serde(default)]
     pub serve_stale: ServeStaleConfig,
 
@@ -140,6 +148,7 @@ impl Default for DnsSettingsConfig {
             allow_wildcard_transfer: default_allow_wildcard_transfer(),
             wildcard_transfer_requires_tsig: default_wildcard_transfer_requires_tsig(),
             require_tsig: default_require_tsig(),
+            require_cookie: false,
             serve_stale: ServeStaleConfig::default(),
             ixfr_history_size: default_ixfr_history_size(),
             ixfr_enabled: default_ixfr_enabled(),
@@ -190,10 +199,11 @@ impl DnsSettingsConfig {
         if !self.allow_transfer.is_empty() {
             return Err(unsupported(
                 "dns.settings.allow_transfer",
-                "zone transfers are not wired from config: DnsServer refuses AXFR/IXFR \
-                 unconditionally (NOTIMP). Remove allow_transfer until the \
-                 zone-transfer design gate (TSIG policy, allowlist, journal \
-                 durability, audit) is satisfied and support lands.",
+                "zone transfers are not activated from config: the AXFR/IXFR handler \
+                 exists, but composition does not attach it, so the server answers \
+                 NOTIMP. Activating allow_transfer stays gated until the zone-transfer \
+                 design gate (TSIG policy, allowlist, journal durability, audit) is \
+                 satisfied and support lands.",
             ));
         }
         if self.allow_wildcard_transfer {
@@ -220,8 +230,9 @@ impl DnsSettingsConfig {
         if !self.ixfr_enabled {
             return Err(unsupported(
                 "dns.settings.ixfr_enabled",
-                "the IXFR toggle is not consumed: IXFR is unconditionally refused \
-                 until zone-transfer support lands. Remove the explicit setting.",
+                "the IXFR toggle is not consumed: the IXFR handler exists, but it is \
+                 not activated from config, so IXFR answers NOTIMP until \
+                 zone-transfer support lands. Remove the explicit setting.",
             ));
         }
         if self.ixfr_history_size != default_ixfr_history_size() {
@@ -240,18 +251,20 @@ impl DnsSettingsConfig {
         if self.dynamic_update.enabled {
             return Err(unsupported(
                 "dns.settings.dynamic_update.enabled",
-                "dynamic UPDATE has no runtime consumer: DnsServer hardcodes \
-                 update_handler to None and answers NOTIMP. Keep disabled until \
-                 the mutation design gate (zone ownership, TSIG policy, journal \
-                 durability, audit) is satisfied and support lands.",
+                "dynamic UPDATE is not activated from config: the update handler \
+                 exists, but DnsServer leaves update_handler unattached, so UPDATE \
+                 answers NOTIMP. Keep disabled until the mutation design gate (zone \
+                 ownership, TSIG policy, journal durability, audit) is satisfied and \
+                 support lands.",
             ));
         }
         if self.notify.enabled {
             return Err(unsupported(
                 "dns.settings.notify.enabled",
-                "NOTIFY has no runtime consumer: DnsServer hardcodes notify_handler \
-                 to None and answers NOTIMP. Keep disabled until the mutation \
-                 design gate is satisfied and support lands.",
+                "NOTIFY is not activated from config: the notify handler exists, but \
+                 DnsServer leaves notify_handler unattached, so NOTIFY answers NOTIMP. \
+                 Keep disabled until the mutation design gate is satisfied and support \
+                 lands.",
             ));
         }
         if self.padding.enabled {

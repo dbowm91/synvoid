@@ -14,7 +14,7 @@ use support::zone::{zone_with_records, zone_with_soa};
 use synvoid_dns::cache::{CacheKey, CacheNamespace, DnsCache, InvalidationReason, TransportClass};
 use synvoid_dns::notify::{NotifyConfig, NotifyHandler};
 use synvoid_dns::server::{RecordType, ShardedZoneStore};
-use synvoid_dns::transfer::ZoneTransfer;
+use synvoid_dns::transfer::{TransferAcl, ZoneTransfer};
 use synvoid_dns::update::DynamicUpdateHandler;
 
 #[allow(dead_code)]
@@ -146,6 +146,7 @@ fn update_invalidates_zone_cache() {
 
     let handler = DynamicUpdateHandler::new(zones.clone())
         .with_config(true, true, false)
+        .expect("no TSIG required")
         .with_cache(cache.clone());
     let client: IpAddr = "10.0.0.1".parse().unwrap();
     let query = build_update_add_record("test.local", "new.test.local", 1, &[10, 0, 0, 1], 300);
@@ -200,7 +201,7 @@ fn axfr_reads_from_zone_store() {
     // Cache is empty — AXFR must still work
     let transfer = ZoneTransfer::with_security_config(
         zones,
-        vec!["10.0.0.1".to_string()],
+        TransferAcl::from_entries(&["10.0.0.1".to_string()]),
         None,
         false,
         false,
@@ -209,7 +210,8 @@ fn axfr_reads_from_zone_store() {
         false,
         true,
         true,
-    );
+    )
+    .expect("no TSIG required");
     let client: IpAddr = "10.0.0.1".parse().unwrap();
     let msgs = transfer
         .handle_axfr_request_messages(
@@ -238,7 +240,7 @@ fn axfr_concurrent_requests_independent() {
     zones.insert("test.local".to_string(), zone_with_records("test.local", 1));
     let transfer = ZoneTransfer::with_security_config(
         zones,
-        vec!["10.0.0.1".to_string()],
+        TransferAcl::from_entries(&["10.0.0.1".to_string()]),
         None,
         false,
         false,
@@ -247,7 +249,8 @@ fn axfr_concurrent_requests_independent() {
         false,
         true,
         true,
-    );
+    )
+    .expect("no TSIG required");
     let client: IpAddr = "10.0.0.1".parse().unwrap();
 
     let msgs1 = transfer

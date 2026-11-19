@@ -26,6 +26,8 @@ static COALESCER_CANCELS: std::sync::LazyLock<Counter> =
     std::sync::LazyLock::new(|| metrics::counter!("dns_query_coalescer_cancels_total"));
 static COALESCER_IN_FLIGHT: std::sync::LazyLock<Gauge> =
     std::sync::LazyLock::new(|| metrics::gauge!("dns_query_coalescer_in_flight"));
+static COALESCER_QUESTION_MISMATCH: std::sync::LazyLock<Counter> =
+    std::sync::LazyLock::new(|| metrics::counter!("dns_query_coalescer_question_mismatch_total"));
 
 /// Returns `true` for query types and opcodes that must never be coalesced.
 ///
@@ -46,6 +48,9 @@ pub struct QueryKey {
     pub qtype: u16,
     pub qclass: u16,
     pub dnssec_ok: bool,
+    /// Checking Disabled. A CD=1 query may be answered with data a validating
+    /// query must not share, so it must not coalesce with a CD=0 one.
+    pub cd: bool,
     pub client_ip: Option<String>,
     pub transport_class: TransportClass,
     pub namespace: CacheNamespace,
@@ -65,6 +70,7 @@ impl QueryKey {
             qtype: parsed.qtype,
             qclass: parsed.qclass,
             dnssec_ok: parsed.dnssec_ok,
+            cd: parsed.flags.checking_disabled,
             client_ip: client_str,
             transport_class: tc,
             namespace: CacheNamespace::Authoritative,
@@ -84,6 +90,7 @@ impl QueryKey {
             qtype: parsed.qtype,
             qclass: parsed.qclass,
             dnssec_ok: parsed.dnssec_ok,
+            cd: parsed.flags.checking_disabled,
             client_ip: client_str,
             transport_class: tc,
             namespace: CacheNamespace::Authoritative,
@@ -106,6 +113,8 @@ pub struct QueryCoalescerMetrics {
     pub lagged: usize,
     pub broadcasts: usize,
     pub cancels: usize,
+    /// Shared answers whose question did not match the waiter's.
+    pub question_mismatches: usize,
 }
 
 pub struct QueryCoalescer {
@@ -220,6 +229,38 @@ impl QueryCoalescer {
         }
     }
 
+    /// Wait for an in-flight answer to `key`, rewritten for this waiter.
+    ///
+    /// A coalesced response is the owner's packet: its message ID and the case
+    /// of its question belong to the owner. Each waiter must receive a packet
+    /// answering *its own* question, so the shared body is adapted here — the
+    /// waiter's ID is restored and the question case is copied from the
+    /// waiter's request. A response whose question does not match the waiter's
+    /// (name, type, or class) is never delivered; the waiter falls back to
+    /// resolving the query itself.
+    pub async fn get_or_wait_for(
+        &self,
+        key: QueryKey,
+        waiter_request: &[u8],
+    ) -> Option<CoalesceResult> {
+        let waiter = match WaiterQuestion::parse(waiter_request) {
+            Some(waiter) => waiter,
+            None => return self.get_or_wait(key).await,
+        };
+
+        match self.get_or_wait(key).await? {
+            CoalesceResult::Response(shared) => match waiter.adapt(&shared) {
+                Some(adapted) => Some(CoalesceResult::Response(Arc::new(adapted))),
+                None => {
+                    self.metrics.write().question_mismatches += 1;
+                    COALESCER_QUESTION_MISMATCH.increment(1);
+                    Some(CoalesceResult::QuestionMismatch)
+                }
+            },
+            other => Some(other),
+        }
+    }
+
     pub fn broadcast_response(&self, key: QueryKey, response: Arc<Vec<u8>>) {
         let entry = {
             let in_flight = self.in_flight.read();
@@ -300,6 +341,7 @@ impl QueryCoalescer {
             evictions: guard.evictions,
             broadcasts: guard.broadcasts,
             cancels: guard.cancels,
+            question_mismatches: guard.question_mismatches,
         }
     }
 
@@ -315,8 +357,70 @@ impl Default for QueryCoalescer {
 }
 
 #[derive(Debug)]
+/// The question section of one waiter's request.
+///
+/// Only the fields a shared response must agree on are kept, plus the message
+/// ID, which every waiter has to see restored.
+struct WaiterQuestion {
+    id: [u8; 2],
+    /// The waiter's own question bytes (name, type, class).
+    question: Vec<u8>,
+    /// Case-folded question, compared against the shared response.
+    folded: Vec<u8>,
+}
+
+impl WaiterQuestion {
+    fn parse(request: &[u8]) -> Option<Self> {
+        if request.len() < 12 {
+            return None;
+        }
+        let qdcount = u16::from_be_bytes([request[4], request[5]]);
+        if qdcount != 1 {
+            return None;
+        }
+        let question = crate::wire::question_section(request)?.to_vec();
+        Some(Self {
+            id: [request[0], request[1]],
+            folded: question.to_ascii_lowercase(),
+            question,
+        })
+    }
+
+    /// Give `shared` this waiter's ID and question case.
+    ///
+    /// The shared packet must carry the same question (case-insensitively) and
+    /// the same label lengths, which is guaranteed by the coalescer key; the
+    /// check is still made so a bug in the key can never deliver a packet
+    /// answering a different question.
+    fn adapt(&self, shared: &[u8]) -> Option<Vec<u8>> {
+        let mut adapted = shared.to_vec();
+        if adapted.len() < 14 {
+            return None;
+        }
+        adapted[0] = self.id[0];
+        adapted[1] = self.id[1];
+
+        let shared_question = crate::wire::question_section(&adapted)?;
+        if shared_question.len() != self.question.len() {
+            return None;
+        }
+        if shared_question.to_ascii_lowercase() != self.folded {
+            return None;
+        }
+
+        // Same length, same folded bytes: copying the waiter's question only
+        // restores label case, it cannot change what was asked.
+        adapted[12..12 + self.question.len()].copy_from_slice(&self.question);
+        Some(adapted)
+    }
+}
+
+#[derive(Debug)]
 pub enum CoalesceResult {
     Response(Arc<Vec<u8>>),
+    /// The in-flight owner answered a different question. The waiter must not
+    /// receive that packet.
+    QuestionMismatch,
     NewQuery(broadcast::Sender<Arc<Vec<u8>>>),
     Lagged,
     Timeout,
@@ -347,6 +451,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -364,6 +469,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -392,6 +498,9 @@ mod tests {
             Some(CoalesceResult::Lagged) => {
                 // Lagged is also acceptable
             }
+            Some(CoalesceResult::QuestionMismatch) => {
+                // Not reachable from `get_or_wait`, which does not adapt.
+            }
             None => {
                 panic!("Unexpected result: None");
             }
@@ -408,6 +517,7 @@ mod tests {
                 qtype: 1,
                 qclass: 1,
                 dnssec_ok: false,
+                cd: false,
                 client_ip: None,
                 transport_class: TransportClass::default(),
                 namespace: CacheNamespace::Authoritative,
@@ -428,6 +538,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -453,6 +564,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -489,6 +601,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -516,6 +629,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -544,6 +658,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -576,6 +691,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -585,6 +701,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: true,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -599,6 +716,7 @@ mod tests {
             qtype: 1,
             qclass: 1, // IN
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -608,6 +726,7 @@ mod tests {
             qtype: 1,
             qclass: 3, // CH
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -622,6 +741,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: Some("10.0.0.1".to_string()),
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -631,6 +751,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: Some("10.0.0.2".to_string()),
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -645,6 +766,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -654,6 +776,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: Some("10.0.0.1".to_string()),
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -668,6 +791,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: true,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::UdpEdns(512),
             namespace: CacheNamespace::Authoritative,
@@ -677,6 +801,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: true,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::UdpEdns(4096),
             namespace: CacheNamespace::Authoritative,
@@ -691,6 +816,7 @@ mod tests {
             qtype: 1, // A
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -700,6 +826,7 @@ mod tests {
             qtype: 28, // AAAA
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -714,6 +841,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -723,6 +851,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -740,6 +869,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::Udp512,
             namespace: CacheNamespace::Authoritative,
@@ -749,6 +879,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::Tcp,
             namespace: CacheNamespace::Authoritative,
@@ -758,6 +889,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::UdpEdns(1232),
             namespace: CacheNamespace::Authoritative,
@@ -767,6 +899,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::Http,
             namespace: CacheNamespace::Authoritative,
@@ -784,6 +917,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::UdpEdns(512),
             namespace: CacheNamespace::Authoritative,
@@ -793,6 +927,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::UdpEdns(4096),
             namespace: CacheNamespace::Authoritative,
@@ -811,6 +946,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -855,6 +991,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -885,6 +1022,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -919,6 +1057,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -951,6 +1090,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -984,6 +1124,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -1008,6 +1149,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -1037,6 +1179,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -1076,6 +1219,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -1118,6 +1262,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -1159,6 +1304,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -1191,6 +1337,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -1219,6 +1366,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -1228,6 +1376,7 @@ mod tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Recursive,
@@ -1311,6 +1460,7 @@ mod coalescing_exclusion_tests {
             qtype,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -1335,6 +1485,7 @@ mod coalescing_exclusion_tests {
             qtype,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -1356,6 +1507,7 @@ mod coalescing_exclusion_tests {
             qtype: 255,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,
@@ -1376,6 +1528,7 @@ mod coalescing_exclusion_tests {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::default(),
             namespace: CacheNamespace::Authoritative,

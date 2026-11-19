@@ -141,43 +141,51 @@ fn ds_digest_unknown_type_errors() {
 /// canonical_name produces lowercase wire-format labels with trailing null.
 #[test]
 fn canonical_name_mixed_case() {
-    let r = canonical_name("A.Example.com");
+    let r = canonical_name("A.Example.com.").unwrap();
     assert_eq!(
         r,
         vec![1, b'a', 7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c', b'o', b'm', 0]
     );
 }
 
-/// canonical_name trims trailing dot.
+/// A relative name has no canonical form without its origin, so it is
+/// rejected instead of being encoded as if it were absolute (finding L3).
 #[test]
-fn canonical_name_trailing_dot() {
-    let r1 = canonical_name("Example.COM.");
-    let r2 = canonical_name("Example.COM");
+fn canonical_name_rejects_a_relative_name() {
+    assert!(
+        canonical_name("Example.COM").is_err(),
+        "a trailing dot is what makes a name absolute; 'Example.COM' is relative"
+    );
     assert_eq!(
-        r1, r2,
-        "Trailing dot must be stripped before canonicalization"
+        canonical_name("Example.COM.").unwrap(),
+        canonical_name("example.com.").unwrap(),
+        "case and the root dot are not significant for an absolute name"
     );
 }
 
 /// canonical_name for root is a single null byte.
 #[test]
 fn canonical_name_root() {
-    assert_eq!(canonical_name("."), vec![0]);
+    assert_eq!(canonical_name(".").unwrap(), vec![0]);
 }
 
 /// canonical_name for empty string is a single null byte.
 #[test]
 fn canonical_name_empty() {
-    assert_eq!(canonical_name(""), vec![0]);
+    assert_eq!(canonical_name("").unwrap(), vec![0]);
 }
 
-/// canonical_name for single label (no dots).
+/// canonical_name for single label (root dot required).
 #[test]
 fn canonical_name_single_label() {
-    let r = canonical_name("localhost");
+    let r = canonical_name("localhost.").unwrap();
     assert_eq!(
         r,
         vec![9, b'l', b'o', b'c', b'a', b'l', b'h', b'o', b's', b't', 0]
+    );
+    assert!(
+        canonical_name("localhost").is_err(),
+        "a single relative label has no wire form without an origin"
     );
 }
 

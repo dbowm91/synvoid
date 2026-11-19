@@ -211,6 +211,14 @@ pub(crate) async fn spawn_admin_service(
     // keep-alive connections accepted before this point.
     let _ = state.request_log_sink.set(admin_state.clone());
 
+    // R3: `/health` reports what the DNS runtime realized. The DNS server owns
+    // the live checker; hand the same handle to the admin state so the two
+    // cannot drift apart.
+    #[cfg(feature = "dns")]
+    if let Some(dns_server) = server.get_dns_server() {
+        admin_state.set_dns_health(dns_server.health_checker());
+    }
+
     let router = crate::admin::build_router_from_state(
         admin_state.clone(),
         admin_cors,

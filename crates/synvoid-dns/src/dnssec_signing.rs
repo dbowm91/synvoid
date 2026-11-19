@@ -111,98 +111,112 @@ pub fn get_nsec_type_bitmap() -> Vec<u16> {
     vec![1, 2, 5, 6, 15, 16, 28, 33, 46, 47, 50]
 }
 
+/// The canonical successor of `current_name` in `zone`.
+///
+/// Kept as a compatibility helper for callers that hold only a `Zone`; the
+/// authoritative path selects proofs from the precomputed index instead
+/// ([`ZoneDenial`](super::denial::ZoneDenial)). The ordering is RFC 4034 §6.1
+/// canonical order, not `String` order (finding L5): an ancestor sorts before
+/// its descendants and the last owner wraps to the apex.
+///
+/// A zone built by hand (not yet inserted into a store) has an empty denial
+/// index, so one is built on demand for this call only.
 pub fn find_next_name_in_zone(zone: &super::server::Zone, current_name: &str) -> Option<String> {
-    let origin = zone.origin.trim_end_matches('.').to_lowercase();
-    let current_lower = current_name
-        .to_lowercase()
-        .trim_end_matches('.')
-        .to_string();
-
-    let mut all_names: Vec<String> = zone
-        .records
-        .keys()
-        .filter(|(name, _)| {
-            let full_name = if name.is_empty() || *name == "@" {
-                origin.clone()
-            } else {
-                format!("{}.{}", name, origin)
-            };
-            !full_name.is_empty()
-        })
-        .map(|(name, _)| {
-            if name.is_empty() || *name == "@" {
-                origin.clone()
-            } else {
-                format!("{}.{}", name, origin)
-            }
-        })
-        .collect();
-
-    all_names.sort();
-    all_names.dedup();
-
-    let mut found_current = false;
-    for name in &all_names {
-        if name.to_lowercase() == current_lower {
-            found_current = true;
-        } else if found_current {
-            return Some(name.clone());
-        }
+    if !zone.denial().is_empty() {
+        return zone.denial().successor(current_name).map(str::to_string);
     }
-
-    if !all_names.is_empty() {
-        Some(all_names[0].clone())
-    } else {
-        None
-    }
+    let denial = super::denial::ZoneDenial::build(
+        &zone.origin,
+        &zone.records,
+        zone.nsec3param.as_ref(),
+        zone.dnskey_ttl.unwrap_or(3600),
+    );
+    denial.successor(current_name).map(str::to_string)
 }
 
+/// RFC 5155 §5 hash of an owner name.
+///
+/// The input is the canonical wire form: fully qualified, lowercase, no
+/// compression, wildcard label kept unexpanded (RFC 5155 §5, RFC 4034 §6.2).
+/// Iteration zero is a hash too — `IH(salt, x, 0) = H(x || salt)` — so one
+/// hash is always applied before the loop (finding D5). `iterations` is
+/// clamped by [`Nsec3Config::sanitized`]-adjacent policy; an unencodable name
+/// yields an empty hash that cannot match any chain member.
 pub fn hash_name_nsec3(name: &str, config: &Nsec3Config) -> Vec<u8> {
-    use sha1::Sha1;
+    let canonical = canonical_wire_name(name);
+    let Some(wire) = canonical else {
+        tracing::error!(
+            name = %name,
+            "NSEC3: owner name is not encodable in canonical wire form"
+        );
+        return Vec::new();
+    };
 
-    let mut name_lower = name.to_lowercase();
-    if name_lower.ends_with('.') {
-        name_lower.pop();
+    // RFC 5155 §5: IH(salt, x, 0) = H(x || salt); the salt is raw bytes.
+    let mut input = Vec::with_capacity(wire.len() + config.salt.len());
+    input.extend_from_slice(&wire);
+    input.extend_from_slice(&config.salt);
+    let mut hash = hash_once(config.algorithm, &input);
+
+    let iterations = config.iterations.min(crate::dnssec::NSEC3_MAX_ITERATIONS);
+    for _ in 1..=iterations {
+        let mut input = Vec::with_capacity(hash.len() + config.salt.len());
+        input.extend_from_slice(&hash);
+        input.extend_from_slice(&config.salt);
+        hash = hash_once(config.algorithm, &input);
     }
-    name_lower.push('.');
-
-    // First iteration: hash(name || salt) per RFC 5155 Section 5.1
-    let mut hash = name_lower.as_bytes().to_vec();
-    hash.extend_from_slice(&config.salt);
-
-    for _ in 0..config.iterations {
-        match config.algorithm {
-            1 => {
-                let mut hasher = Sha1::new();
-                hasher.update(&hash);
-                hash = hasher.finalize().to_vec();
-            }
-            2 => {
-                let mut hasher = Sha256::new();
-                hasher.update(&hash);
-                hash = hasher.finalize().to_vec();
-            }
-            _ => {
-                tracing::warn!(
-                    "Unsupported NSEC3 algorithm {}, falling back to SHA-1",
-                    config.algorithm
-                );
-                let mut hasher = Sha1::new();
-                hasher.update(&hash);
-                hash = hasher.finalize().to_vec();
-            }
-        }
-    }
-
     hash
 }
 
-pub fn create_nsec3_record(
-    _owner_name: &str,
-    next_name: &str,
-    config: &Nsec3Config,
-    type_bitmap: &[u16],
-) -> Vec<u8> {
+fn hash_once(algorithm: u8, input: &[u8]) -> Vec<u8> {
+    use sha1::Sha1;
+
+    match algorithm {
+        1 => {
+            let mut hasher = Sha1::new();
+            hasher.update(input);
+            hasher.finalize().to_vec()
+        }
+        2 => {
+            let mut hasher = Sha256::new();
+            hasher.update(input);
+            hasher.finalize().to_vec()
+        }
+        _ => {
+            tracing::warn!(
+                "Unsupported NSEC3 algorithm {}, falling back to SHA-1",
+                algorithm
+            );
+            let mut hasher = Sha1::new();
+            hasher.update(input);
+            hasher.finalize().to_vec()
+        }
+    }
+}
+
+/// Canonical wire form of an owner name for NSEC3 hashing.
+///
+/// Accepts either an absolute spelling (`example.com.`) or the presentation
+/// spelling used throughout the zone (`example.com`); the result is always
+/// absolute. Invalid labels are rejected rather than guessed at.
+fn canonical_wire_name(name: &str) -> Option<Vec<u8>> {
+    let mut fqdn = name.trim().to_ascii_lowercase();
+    if fqdn.is_empty() || fqdn == "." {
+        return Some(vec![0]);
+    }
+    if !fqdn.ends_with('.') {
+        fqdn.push('.');
+    }
+    crate::dnssec::canonical_name(&fqdn).ok()
+}
+
+/// NSEC3 RDATA (RFC 5155 §3.2).
+///
+/// `next_hash` is the **next hashed owner name in hash order**, as raw octets
+/// taken from the sorted chain — never an owner name and never re-hashed
+/// (finding D38). The hash-length byte is the hash length (20 for SHA-1), not
+/// the length of its base32 spelling.
+pub fn create_nsec3_record(config: &Nsec3Config, next_hash: &[u8], type_bitmap: &[u16]) -> Vec<u8> {
     let mut nsec3 = Vec::new();
 
     nsec3.push(config.algorithm);
@@ -210,10 +224,8 @@ pub fn create_nsec3_record(
     nsec3.extend_from_slice(&config.iterations.to_be_bytes());
     nsec3.push(config.salt.len() as u8);
     nsec3.extend_from_slice(&config.salt);
-
-    let next_hash = hash_name_nsec3(next_name, config);
     nsec3.push(next_hash.len() as u8);
-    nsec3.extend_from_slice(&next_hash);
+    nsec3.extend_from_slice(next_hash);
 
     for (window, bits) in build_type_bitmap(type_bitmap) {
         nsec3.push(window);
@@ -240,9 +252,14 @@ pub fn get_nsec3_type_bitmap() -> Vec<u16> {
     vec![1, 2, 5, 6, 15, 16, 28, 33, 46, 47, 50]
 }
 
-pub fn create_nsec3_owner_name(base_name: &str, hash: &[u8]) -> String {
+pub fn create_nsec3_owner_name(origin: &str, hash: &[u8]) -> String {
     let hash_b32 = base32_encode(hash);
-    format!("{}.{}.{}", hash_b32.len(), hash_b32, base_name)
+    let origin = origin.trim_end_matches('.');
+    if origin.is_empty() {
+        hash_b32
+    } else {
+        format!("{hash_b32}.{origin}")
+    }
 }
 
 pub fn base32_encode(input: &[u8]) -> String {
@@ -355,11 +372,48 @@ mod tests {
 
     #[test]
     fn test_create_nsec3_record() {
-        let config = Nsec3Config::default();
-        let hash = hash_name_nsec3("example.com.", &config);
-        let owner = create_nsec3_owner_name("example.com.", &hash);
-        let nsec3 = create_nsec3_record(&owner, "next.example.com.", &config, &[1, 2, 28]);
-        assert!(!nsec3.is_empty());
+        let config = Nsec3Config {
+            algorithm: 1,
+            flags: 0,
+            iterations: 0,
+            salt: vec![0xAB, 0xCD],
+        };
+        let next_hash = [0x11u8; 20];
+        let nsec3 = create_nsec3_record(&config, &next_hash, &[1, 2, 28]);
+        // algorithm, flags, iterations(2), salt length, salt, hash length.
+        assert_eq!(nsec3[0], 1);
+        assert_eq!(nsec3[1], 0);
+        assert_eq!(u16::from_be_bytes([nsec3[2], nsec3[3]]), 0);
+        assert_eq!(nsec3[4], 2, "salt length is the raw salt octets");
+        assert_eq!(&nsec3[5..7], &[0xAB, 0xCD]);
+        assert_eq!(
+            nsec3[7], 20,
+            "hash length is the hash length (20), never the base32 length"
+        );
+        assert_eq!(
+            &nsec3[8..28],
+            &next_hash,
+            "the next-hash field is the next hash bytes, not a re-hash"
+        );
+    }
+
+    /// RFC 5155 Appendix A, salt `aabbccdd`, 12 iterations: H(example) =
+    /// `0p9mhaveqvm6t7vbl5lop2u3t2rp3tom`.
+    #[test]
+    fn test_hash_name_nsec3_rfc5155_vector() {
+        let config = Nsec3Config {
+            algorithm: 1,
+            flags: 0,
+            iterations: 12,
+            salt: vec![0xAA, 0xBB, 0xCC, 0xDD],
+        };
+        let hash = hash_name_nsec3("example.", &config);
+        assert_eq!(hash.len(), 20);
+        assert_eq!(
+            base32_encode(&hash),
+            "0P9MHAVEQVM6T7VBL5LOP2U3T2RP3TOM",
+            "the hash must be H(canonical wire name || salt), iterated 12 times"
+        );
     }
 
     #[test]
@@ -432,9 +486,21 @@ mod tests {
         let config = Nsec3Config::default();
         let hash = hash_name_nsec3("example.com.", &config);
         let owner = create_nsec3_owner_name("example.com.", &hash);
-        assert!(owner.ends_with(".example.com."));
-        let parts: Vec<&str> = owner.split('.').collect();
-        assert!(parts[0].parse::<usize>().is_ok());
+        assert_eq!(
+            owner,
+            format!("{}.example.com", base32_encode(&hash)),
+            "the owner is base32(hash) + '.' + origin, with no length prefix"
+        );
+        let first = owner.split('.').next().unwrap();
+        assert_eq!(
+            first.len(),
+            32,
+            "a 20-octet SHA-1 hash encodes to 32 base32hex characters"
+        );
+        assert!(
+            !first.chars().all(|c| c.is_ascii_digit()),
+            "the first label is the hash, not the length of its base32 spelling"
+        );
     }
 
     #[test]

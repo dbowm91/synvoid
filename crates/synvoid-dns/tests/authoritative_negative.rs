@@ -86,6 +86,11 @@ fn build_test_zone() -> Zone {
         }],
     );
 
+    // Phase 09: the lookup reads the canonical owner index. Production paths
+    // build it in `Zone::commit_records`; a zone constructed by hand (this
+    // fixture, never inserted) must build it too or it has no owners at all.
+    zone.rebuild_denial();
+
     zone
 }
 
@@ -114,6 +119,35 @@ fn first_answer_rr_type(resp: &[u8]) -> Option<u16> {
         return None;
     }
     Some(u16::from_be_bytes([resp[pos], resp[pos + 1]]))
+}
+
+/// Every A record in the answer section, in wire order.
+///
+/// Phase 09 answers a CNAME chain with the CNAME **and** the in-zone target's
+/// records (RFC 1034 §3.6.2), so a test needs to look past the first RR.
+fn answer_a_records(resp: &[u8]) -> Vec<std::net::Ipv4Addr> {
+    let ancount = response_ancount(resp) as usize;
+    let mut pos = skip_question_section(resp);
+    let mut records = Vec::new();
+    for _ in 0..ancount {
+        pos = skip_wire_name(resp, pos);
+        if pos + 10 > resp.len() {
+            break;
+        }
+        let rr_type = u16::from_be_bytes([resp[pos], resp[pos + 1]]);
+        let rdlength = u16::from_be_bytes([resp[pos + 8], resp[pos + 9]]) as usize;
+        let rdata_start = pos + 10;
+        if rr_type == 1 && rdlength == 4 && rdata_start + 4 <= resp.len() {
+            records.push(std::net::Ipv4Addr::new(
+                resp[rdata_start],
+                resp[rdata_start + 1],
+                resp[rdata_start + 2],
+                resp[rdata_start + 3],
+            ));
+        }
+        pos = rdata_start + rdlength;
+    }
+    records
 }
 
 /// Parse the first answer record's A record RDATA as an Ipv4Addr.
@@ -475,21 +509,28 @@ fn cname_resolution_returns_target_a_record() {
         RCODE_NOERROR,
         "RCODE must be NOERROR for CNAME resolution"
     );
+    // RFC 1034 §3.6.2 / phase 09 R1: the answer is the CNAME **and** the
+    // in-zone target's records.
     assert_eq!(
         response_ancount(&resp),
-        1,
-        "answer count must be 1 (CNAME record)"
+        2,
+        "answer count must be 2 (CNAME + target A)"
     );
 
-    // Verify the answer is a CNAME record (type 5)
+    // Verify the answer starts with a CNAME record (type 5)
     let rr_type = first_answer_rr_type(&resp).expect("answer record must exist");
-    assert_eq!(rr_type, 5, "answer record type must be CNAME (5)");
+    assert_eq!(rr_type, 5, "first answer record type must be CNAME (5)");
 
     // Verify the CNAME target
     let cname = first_answer_cname_rdata(&resp).expect("CNAME RDATA must be present");
     assert_eq!(
         cname, "www.test.local",
         "CNAME target must be www.test.local"
+    );
+    assert_eq!(
+        answer_a_records(&resp),
+        vec!["192.0.2.10".parse::<std::net::Ipv4Addr>().unwrap()],
+        "the in-zone CNAME target's A record must be appended"
     );
 }
 
@@ -937,19 +978,26 @@ fn cname_owner_queried_for_a_returns_cname() {
         RCODE_NOERROR,
         "CNAME owner queried for A must return NOERROR"
     );
+    // RFC 1034 §3.6.2 / phase 09 R1: the answer is the CNAME **and** the
+    // in-zone target's records, so a resolver does not have to chase it.
     assert_eq!(
         response_ancount(&resp),
-        1,
-        "answer count must be 1 (CNAME record)"
+        2,
+        "answer count must be 2 (CNAME + target A)"
     );
 
     let rr_type = first_answer_rr_type(&resp).expect("answer record must exist");
-    assert_eq!(rr_type, 5, "answer record type must be CNAME (5)");
+    assert_eq!(rr_type, 5, "first answer record type must be CNAME (5)");
 
     let cname = first_answer_cname_rdata(&resp).expect("CNAME RDATA must be present");
     assert_eq!(
         cname, "www.test.local",
         "CNAME target must be www.test.local"
+    );
+    assert_eq!(
+        answer_a_records(&resp),
+        vec!["192.0.2.10".parse::<std::net::Ipv4Addr>().unwrap()],
+        "the in-zone CNAME target's A record must be appended"
     );
 }
 

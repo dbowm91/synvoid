@@ -4,6 +4,7 @@ use super::*;
 use crate::mesh_sync::MeshDnsRegistry;
 
 use crate::cache::TransportClass;
+use crate::denial::{DenialKind, DenialMode};
 use crate::parsed_query::ParsedDnsQuery;
 
 // Only `resolve_from_mesh` takes the country lookup, and that is mesh-gated.
@@ -14,6 +15,15 @@ use crate::geo::CountryLookup;
 enum TtlParseError {
     Truncated,
     MalformedLabel,
+}
+
+/// What the DNS-cookie policy decided for one query.
+enum CookiePolicy {
+    /// The query may be answered; `refresh` is a fresh COOKIE option to attach
+    /// to the response when a valid cookie was presented.
+    Pass { refresh: Option<Vec<u8>> },
+    /// The query must not reach the answer path.
+    Answer(Arc<Vec<u8>>),
 }
 
 impl DnsServer {
@@ -102,6 +112,23 @@ impl DnsServer {
     ///
     /// A clean client close (EOF) or idle timeout ends the loop normally
     /// (`Ok`); framing violations and I/O errors end it with `Err`.
+    /// Write one length-prefixed error response on a TCP connection.
+    async fn write_tcp_error(
+        stream: &mut tokio::net::TcpStream,
+        query: &[u8],
+        rcode: u8,
+    ) -> Result<(), String> {
+        use tokio::io::AsyncWriteExt;
+
+        let Some(error) = wire::build_error_response(query, rcode) else {
+            return Ok(());
+        };
+        let len = error.len() as u16;
+        let mut buf = len.to_be_bytes().to_vec();
+        buf.extend_from_slice(&error);
+        stream.write_all(&buf).await.map_err(|e| e.to_string())
+    }
+
     pub(super) async fn handle_tcp_query(
         mut stream: tokio::net::TcpStream,
         ctx: QueryContext<'_>,
@@ -201,256 +228,104 @@ impl DnsServer {
 
             queries_served += 1;
 
-            // Validate query structure
-            if let Some(validator) = ctx.query_validator {
-                if let Err(resp) = validator.validate_query_with_response(&query) {
-                    if let Some(response) = resp {
-                        let len = response.len() as u16;
-                        let mut response_buf = len.to_be_bytes().to_vec();
-                        response_buf.extend_from_slice(&response);
-                        if let Err(e) = stream.write_all(&response_buf).await {
-                            tracing::debug!("Failed to send error response: {}", e);
-                        }
+            // One gate for every transport. A refusal is written as a DNS
+            // error response; a drop (QR=1 or a packet too short to answer)
+            // closes this connection without a response, which is the only
+            // safe action for a response message (D14).
+            let admitted = match crate::server::admit(
+                &query,
+                client_ip,
+                crate::server::TransportKind::Tcp,
+                &ctx,
+            ) {
+                crate::server::Admission::Allow(admitted) => admitted,
+                crate::server::Admission::Reply(response) => {
+                    let len = response.len() as u16;
+                    let mut response_buf = len.to_be_bytes().to_vec();
+                    response_buf.extend_from_slice(&response);
+                    if let Err(e) = stream.write_all(&response_buf).await {
+                        tracing::debug!("Failed to send error response: {}", e);
                     }
-                    tracing::debug!(
-                        "Invalid DNS TCP query from {}: validation failed",
-                        client_ip
-                    );
                     continue;
                 }
-            }
-
-            // Parse once — pass parsed state to firewall and downstream
-            let parsed_tcp = ParsedDnsQuery::parse(&query);
-
-            // Firewall check — skip if parse fails (malformed query → FORMERR anyway)
-            if let (Some(fw), Ok(ref parsed_q)) = (ctx.firewall.as_ref(), &parsed_tcp) {
-                let fw_read = fw.read();
-                match fw_read.evaluate_query(parsed_q, client_ip, &parsed_q.qname) {
-                    Ok(decision) => {
-                        if decision.action == crate::firewall::DnsFirewallAction::Block {
-                            tracing::warn!(
-                                "DNS TCP query blocked by firewall: rule={} client={} qname={}",
-                                decision.rule_id,
-                                client_ip,
-                                parsed_q.qname
-                            );
-                            continue;
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("TCP Firewall evaluation error: {}", e);
-                    }
-                }
-            }
-
-            let skip_coalesce = parsed_tcp
-                .as_ref()
-                .map(|pq| crate::query_coalesce::should_skip_coalescing(pq.qtype, pq.flags.opcode))
-                .unwrap_or(false);
-
-            let response = if let Some(coalescer) = ctx.query_coalescer {
-                let query_key = if skip_coalesce {
-                    None
-                } else if let Ok(ref parsed_q) = parsed_tcp {
-                    crate::query_coalesce::QueryKey::from_parsed(
-                        parsed_q,
-                        Some(client_ip),
-                        &query,
-                        Some(TransportClass::Tcp),
-                    )
-                } else {
-                    crate::query_coalesce::QueryKey::from_query(
-                        &query,
-                        Some(client_ip),
-                        Some(TransportClass::Tcp),
-                    )
-                };
-
-                if let Some(key) = query_key {
-                    match coalescer.get_or_wait(key.clone()).await {
-                        Some(crate::query_coalesce::CoalesceResult::Response(resp)) => Some(resp),
-                        Some(crate::query_coalesce::CoalesceResult::NewQuery(_tx)) => {
-                            let resp = if let (Some(c), Ok(ref parsed_q)) = (ctx.cache, &parsed_tcp)
-                            {
-                                Self::handle_parsed_query_with_cache(
-                                    &ctx,
-                                    parsed_q,
-                                    &query,
-                                    c,
-                                    TransportClass::Tcp,
-                                    Some(client_ip),
-                                )
-                            } else if let Some(c) = ctx.cache {
-                                Self::handle_query_with_cache(
-                                    &ctx,
-                                    &query,
-                                    c,
-                                    TransportClass::Tcp,
-                                    Some(client_ip),
-                                )
-                            } else if let Ok(ref parsed_q) = parsed_tcp {
-                                Self::handle_parsed_query(&ctx, parsed_q, &query, Some(client_ip))
-                            } else {
-                                Self::handle_query(&ctx, &query, Some(client_ip))
-                            };
-
-                            if let Some(ref r) = resp {
-                                coalescer.broadcast_response(key.clone(), r.clone());
-                            } else {
-                                coalescer.cancel_in_flight(&key);
-                            }
-
-                            resp
-                        }
-                        None => {
-                            if let (Some(c), Ok(ref parsed_q)) = (ctx.cache, &parsed_tcp) {
-                                Self::handle_parsed_query_with_cache(
-                                    &ctx,
-                                    parsed_q,
-                                    &query,
-                                    c,
-                                    TransportClass::Tcp,
-                                    Some(client_ip),
-                                )
-                            } else if let Some(c) = ctx.cache {
-                                Self::handle_query_with_cache(
-                                    &ctx,
-                                    &query,
-                                    c,
-                                    TransportClass::Tcp,
-                                    Some(client_ip),
-                                )
-                            } else if let Ok(ref parsed_q) = parsed_tcp {
-                                Self::handle_parsed_query(&ctx, parsed_q, &query, Some(client_ip))
-                            } else {
-                                Self::handle_query(&ctx, &query, Some(client_ip))
-                            }
-                        }
-                        _ => {
-                            if let (Some(c), Ok(ref parsed_q)) = (ctx.cache, &parsed_tcp) {
-                                Self::handle_parsed_query_with_cache(
-                                    &ctx,
-                                    parsed_q,
-                                    &query,
-                                    c,
-                                    TransportClass::Tcp,
-                                    Some(client_ip),
-                                )
-                            } else if let Some(c) = ctx.cache {
-                                Self::handle_query_with_cache(
-                                    &ctx,
-                                    &query,
-                                    c,
-                                    TransportClass::Tcp,
-                                    Some(client_ip),
-                                )
-                            } else if let Ok(ref parsed_q) = parsed_tcp {
-                                Self::handle_parsed_query(&ctx, parsed_q, &query, Some(client_ip))
-                            } else {
-                                Self::handle_query(&ctx, &query, Some(client_ip))
-                            }
-                        }
-                    }
-                } else if let (Some(c), Ok(ref parsed_q)) = (ctx.cache, &parsed_tcp) {
-                    Self::handle_parsed_query_with_cache(
-                        &ctx,
-                        parsed_q,
-                        &query,
-                        c,
-                        TransportClass::Tcp,
-                        Some(client_ip),
-                    )
-                } else if let Some(c) = ctx.cache {
-                    Self::handle_query_with_cache(
-                        &ctx,
-                        &query,
-                        c,
-                        TransportClass::Tcp,
-                        Some(client_ip),
-                    )
-                } else if let Ok(ref parsed_q) = parsed_tcp {
-                    Self::handle_parsed_query(&ctx, parsed_q, &query, Some(client_ip))
-                } else {
-                    Self::handle_query(&ctx, &query, Some(client_ip))
-                }
-            } else if let (Some(c), Ok(ref parsed_q)) = (ctx.cache, &parsed_tcp) {
-                Self::handle_parsed_query_with_cache(
-                    &ctx,
-                    parsed_q,
-                    &query,
-                    c,
-                    TransportClass::Tcp,
-                    Some(client_ip),
-                )
-            } else if let Some(c) = ctx.cache {
-                Self::handle_query_with_cache(&ctx, &query, c, TransportClass::Tcp, Some(client_ip))
-            } else if let Ok(ref parsed_q) = parsed_tcp {
-                Self::handle_parsed_query(&ctx, parsed_q, &query, Some(client_ip))
-            } else {
-                Self::handle_query(&ctx, &query, Some(client_ip))
+                crate::server::Admission::Drop => break,
             };
 
-            if let Some(resp) = response {
-                if let Some(zt) = ctx.zone_transfer {
-                    if let Ok(ref parsed_zt) = parsed_tcp {
-                        if parsed_zt.is_axfr() {
-                            let tsig =
-                                crate::tsig::parse_tsig_from_query(&query, parsed_zt.question_end);
-                            match zt.handle_axfr_request_messages(
-                                &parsed_zt.qname,
-                                client_ip,
-                                tsig.as_ref(),
-                                parsed_zt.id,
-                                &query,
-                                true, // TCP path
-                            ) {
-                                Ok(messages) => {
-                                    for msg in messages {
-                                        let len = msg.len() as u16;
-                                        let mut buf = len.to_be_bytes().to_vec();
-                                        buf.extend_from_slice(&msg);
-                                        stream.write_all(&buf).await.map_err(|e| e.to_string())?;
-                                    }
-                                    continue;
-                                }
-                                Err(e) => {
-                                    tracing::warn!("AXFR multi-message failed: {}", e);
-                                    continue;
-                                }
-                            }
+            // AXFR/IXFR are multi-message protocols, so the TCP framing layer
+            // owns them and dispatches them here exactly once. Routing them
+            // through `serve_admitted` as well would verify the request TSIG
+            // twice, and the second verification of an authentic MAC is a
+            // replay.
+            {
+                let parsed_query = admitted.parsed();
+                if parsed_query.is_axfr() || parsed_query.is_ixfr() {
+                    if let Some(zt) = ctx.zone_transfer {
+                        // Cheap ACL rejection before the TSIG parser sees the
+                        // packet (phase 03 R3 / phase 07 R2).
+                        let origin = parsed_query.qname.trim_end_matches('.');
+                        if !zt.network_and_zone_allowed(client_ip, origin) {
+                            Self::write_tcp_error(&mut stream, &query, wire::RCODE_REFUSED).await?;
+                            continue;
                         }
 
-                        if parsed_zt.is_ixfr() {
+                        let tsig = match crate::tsig::parse_tsig_from_query(
+                            &query,
+                            parsed_query.question_end,
+                        ) {
+                            Ok(tsig) => tsig,
+                            Err(e) => {
+                                tracing::warn!("Transfer refused: malformed TSIG: {}", e);
+                                Self::write_tcp_error(&mut stream, &query, wire::RCODE_FORMERR)
+                                    .await?;
+                                continue;
+                            }
+                        };
+
+                        let outcome = if parsed_query.is_axfr() {
+                            zt.handle_axfr_request_messages(
+                                &parsed_query.qname,
+                                client_ip,
+                                tsig.as_ref(),
+                                parsed_query.id,
+                                &query,
+                                true, // TCP path
+                            )
+                        } else {
                             let serial = Self::extract_ixfr_serial(&query);
-                            let tsig =
-                                crate::tsig::parse_tsig_from_query(&query, parsed_zt.question_end);
-                            match zt.handle_ixfr_request_messages(
-                                &parsed_zt.qname,
+                            zt.handle_ixfr_request_messages(
+                                &parsed_query.qname,
                                 client_ip,
                                 serial,
                                 tsig.as_ref(),
-                                parsed_zt.id,
+                                parsed_query.id,
                                 &query,
-                            ) {
-                                Ok(messages) => {
-                                    for msg in messages {
-                                        let len = msg.len() as u16;
-                                        let mut buf = len.to_be_bytes().to_vec();
-                                        buf.extend_from_slice(&msg);
-                                        stream.write_all(&buf).await.map_err(|e| e.to_string())?;
-                                    }
-                                    continue;
+                                true, // TCP path
+                            )
+                        };
+
+                        match outcome {
+                            Ok(messages) => {
+                                for msg in messages {
+                                    let len = msg.len() as u16;
+                                    let mut buf = len.to_be_bytes().to_vec();
+                                    buf.extend_from_slice(&msg);
+                                    stream.write_all(&buf).await.map_err(|e| e.to_string())?;
                                 }
-                                Err(e) => {
-                                    tracing::warn!("IXFR multi-message failed: {}", e);
-                                    continue;
-                                }
+                                continue;
+                            }
+                            Err(e) => {
+                                tracing::warn!("Transfer failed: {} (rcode {})", e, e.rcode);
+                                Self::write_tcp_error(&mut stream, &query, e.rcode).await?;
+                                continue;
                             }
                         }
                     }
                 }
+            }
 
+            let response = Self::serve_admitted(&ctx, &admitted, &query, Some(client_ip)).await;
+
+            if let Some(resp) = response {
                 // Apply RRL for TCP queries if enabled
                 if ctx.rrl_enabled {
                     if let Some(rl) = ctx.rate_limiter {
@@ -470,32 +345,16 @@ impl DnsServer {
                             "{}", e
                         );
 
-                        // Build a SERVFAIL that echoes the original question section
-                        // when the query was successfully parsed (RFC 1035 §4.1.1).
-                        //
-                        // When parsing succeeds, we capture query ID, RD bit, and the
-                        // full question section (QNAME wire + QTYPE + QCLASS) from the
-                        // parsed query to construct a standards-compliant SERVFAIL.
-                        //
-                        // When parsing fails (malformed query), we extract what we can
-                        // from the raw header bytes and emit a minimal SERVFAIL with
-                        // no question section (QDCOUNT=0).
-                        let (query_id, rd, question_bytes) = if let Ok(ref parsed_q) = parsed_tcp {
-                            // Question section: QNAME (wire) + QTYPE (2) + QCLASS (2)
-                            let q = &query[12..parsed_q.question_end];
-                            (
-                                parsed_q.id,
-                                parsed_q.flags.recursion_desired,
-                                Some(q.to_vec()),
-                            )
-                        } else if query.len() >= 4 {
-                            let qid = u16::from_be_bytes([query[0], query[1]]);
-                            let flags = u16::from_be_bytes([query[2], query[3]]);
-                            let rd = (flags & 0x0100) != 0;
-                            (qid, rd, None)
-                        } else {
-                            (0u16, false, None)
-                        };
+                        // Build a SERVFAIL that echoes the original question
+                        // section (RFC 1035 §4.1.1). Admission guarantees the
+                        // query parsed, so the question is always available.
+                        let parsed_q = admitted.parsed();
+                        let question = &query[12..parsed_q.question_end];
+                        let (query_id, rd, question_bytes) = (
+                            parsed_q.id,
+                            parsed_q.flags.recursion_desired,
+                            Some(question.to_vec()),
+                        );
 
                         // QR=1, AA=0, TC=0, RD=echoed, RA=0, AD=0, RCODE=2 (SERVFAIL)
                         //
@@ -568,17 +427,6 @@ impl DnsServer {
 
         Ok(())
     }
-    pub(crate) fn handle_query_with_cache(
-        ctx: &QueryContext,
-        query: &[u8],
-        cache: &Arc<DnsCache>,
-        transport_class: TransportClass,
-        client_ip: Option<std::net::IpAddr>,
-    ) -> Option<Arc<Vec<u8>>> {
-        let parsed = ParsedDnsQuery::parse(query).ok()?;
-        Self::handle_parsed_query_with_cache(ctx, &parsed, query, cache, transport_class, client_ip)
-    }
-
     pub(super) fn handle_parsed_query_with_cache(
         ctx: &QueryContext,
         parsed: &ParsedDnsQuery<'_>,
@@ -587,6 +435,13 @@ impl DnsServer {
         transport_class: TransportClass,
         client_ip: Option<std::net::IpAddr>,
     ) -> Option<Arc<Vec<u8>>> {
+        // EDNS envelope errors are answered before anything is cached or
+        // dispatched: BADVERS must not answer the question, and a duplicate
+        // OPT is a FORMERR regardless of opcode.
+        if let Some(response) = Self::edns_protocol_error(parsed) {
+            return Some(response);
+        }
+
         if parsed.is_notify() {
             if let Some(handler) = ctx.notify_handler {
                 if let Some(ip) = client_ip {
@@ -599,10 +454,16 @@ impl DnsServer {
         if parsed.is_update() {
             if let Some(handler) = ctx.update_handler {
                 if let Some(ip) = client_ip {
-                    match handler.handle_update(query, ip) {
-                        Ok(response) => return Some(Arc::new(response)),
-                        Err(_) => return None,
-                    }
+                    return match handler.handle_update(query, ip) {
+                        Ok(response) => Some(Arc::new(response)),
+                        // A refused UPDATE is answered, not dropped: a client
+                        // that never receives a reply cannot tell a policy
+                        // refusal from a lost packet.
+                        Err(e) => {
+                            tracing::warn!("UPDATE failed: {} (rcode {})", e, e.rcode);
+                            wire::build_error_response(query, e.rcode).map(Arc::new)
+                        }
+                    };
                 }
             }
             return wire::build_error_response(query, wire::RCODE_NOTIMP).map(Arc::new);
@@ -610,7 +471,20 @@ impl DnsServer {
 
         if parsed.is_axfr() {
             if let (Some(zt), Some(ip)) = (ctx.zone_transfer, client_ip) {
-                let tsig = crate::tsig::parse_tsig_from_query(query, parsed.question_end);
+                // Cheap ACL rejection before the TSIG parser runs.
+                let origin = parsed.qname.trim_end_matches('.');
+                if !zt.network_and_zone_allowed(ip, origin) {
+                    return wire::build_error_response(query, wire::RCODE_REFUSED).map(Arc::new);
+                }
+
+                let tsig = match crate::tsig::parse_tsig_from_query(query, parsed.question_end) {
+                    Ok(tsig) => tsig,
+                    Err(e) => {
+                        tracing::warn!("AXFR refused: malformed TSIG: {}", e);
+                        return wire::build_error_response(query, wire::RCODE_FORMERR)
+                            .map(Arc::new);
+                    }
+                };
                 let message_id = u16::from_be_bytes([query[0], query[1]]);
                 match zt.handle_axfr_request(
                     &parsed.qname,
@@ -622,8 +496,8 @@ impl DnsServer {
                 ) {
                     Ok(response) => return Some(Arc::new(response)),
                     Err(e) => {
-                        tracing::warn!("AXFR failed: {}", e);
-                        return None;
+                        tracing::warn!("AXFR failed: {} (rcode {})", e, e.rcode);
+                        return wire::build_error_response(query, e.rcode).map(Arc::new);
                     }
                 }
             }
@@ -632,8 +506,20 @@ impl DnsServer {
 
         if parsed.is_ixfr() {
             if let (Some(zt), Some(ip)) = (ctx.zone_transfer, client_ip) {
+                let origin = parsed.qname.trim_end_matches('.');
+                if !zt.network_and_zone_allowed(ip, origin) {
+                    return wire::build_error_response(query, wire::RCODE_REFUSED).map(Arc::new);
+                }
+
                 let serial = Self::extract_ixfr_serial(query);
-                let tsig = crate::tsig::parse_tsig_from_query(query, parsed.question_end);
+                let tsig = match crate::tsig::parse_tsig_from_query(query, parsed.question_end) {
+                    Ok(tsig) => tsig,
+                    Err(e) => {
+                        tracing::warn!("IXFR refused: malformed TSIG: {}", e);
+                        return wire::build_error_response(query, wire::RCODE_FORMERR)
+                            .map(Arc::new);
+                    }
+                };
                 let message_id = u16::from_be_bytes([query[0], query[1]]);
                 match zt.handle_ixfr_request(
                     &parsed.qname,
@@ -642,11 +528,12 @@ impl DnsServer {
                     tsig.as_ref(),
                     message_id,
                     query,
+                    transport_class == TransportClass::Tcp,
                 ) {
                     Ok(response) => return Some(Arc::new(response)),
                     Err(e) => {
-                        tracing::warn!("IXFR failed: {}", e);
-                        return None;
+                        tracing::warn!("IXFR failed: {} (rcode {})", e, e.rcode);
+                        return wire::build_error_response(query, e.rcode).map(Arc::new);
                     }
                 }
             }
@@ -664,10 +551,20 @@ impl DnsServer {
         };
 
         if let Some(cached) = cache.get(&cache_key) {
-            return Some(cached);
+            // The cache stores a complete response, including the transaction
+            // ID of the query that produced it. A new query carries a new ID;
+            // returning the cached bytes unchanged makes every client but the
+            // first discard the datagram as a mismatched response. The key
+            // binds qname (case included), qtype, qclass, DO, transport class
+            // and client, so the ID is the only field that differs.
+            let mut response = cached.as_ref().clone();
+            if response.len() >= 2 && query.len() >= 2 {
+                response[0..2].copy_from_slice(&query[0..2]);
+            }
+            return Some(Arc::new(response));
         }
 
-        let result = Self::handle_parsed_query(ctx, parsed, query, client_ip);
+        let result = Self::handle_parsed_query(ctx, parsed, query, client_ip, transport_class);
 
         if let Some(ref data) = result {
             let ttl = Self::extract_ttl_from_response(data.as_ref(), ctx.negative_cache_ttl);
@@ -881,6 +778,21 @@ impl DnsServer {
             return None;
         }
 
+        // R1: authenticity is a precondition for answering, not a score
+        // penalty. A registration that slipped into the map without the
+        // capability's verdict — or one admitted by any future path that skips
+        // `sync_from_dht` — must not answer. `calculate_origin_score` still
+        // penalizes unauthenticated nodes by 50 points; that is a tie-break,
+        // never an admission decision.
+        let origins = mesh_registry.get_origin_nodes_for_domain(domain);
+        if !origins.iter().any(|origin| origin.authenticated) {
+            tracing::warn!(
+                domain = %domain,
+                "Mesh origin registry holds no authenticated origin for the domain; refusing"
+            );
+            return None;
+        }
+
         let client_geo = geoip_lookup
             .and_then(|lookup| lookup.country_info(client_ip))
             .map(|c| c.code);
@@ -888,56 +800,399 @@ impl DnsServer {
         let best_edge =
             mesh_registry.get_best_edge_for_client(domain, Some(client_ip), client_geo.as_deref());
 
-        best_edge.map(|edge| {
-            let record_type = match qtype {
-                1 => RecordType::A,
-                28 => RecordType::AAAA,
-                _ => RecordType::A,
-            };
+        // An edge is the preferred answer when one serves the domain. Without
+        // one, an authenticated origin answers with the addresses it
+        // advertised: that is the DHT-registration path, and before this it
+        // produced no records at all because the IPs were discarded.
+        let answer_ips = match best_edge {
+            Some(edge) => edge.ip_addresses,
+            None => {
+                let mut authenticated_origins =
+                    origins.into_iter().filter(|origin| origin.authenticated);
+                let origin = authenticated_origins.next()?;
+                authenticated_origins
+                    .fold(origin, |best, candidate| {
+                        if candidate.capacity > best.capacity
+                            || (candidate.capacity == best.capacity
+                                && candidate.node_id < best.node_id)
+                        {
+                            candidate
+                        } else {
+                            best
+                        }
+                    })
+                    .ip_addresses
+            }
+        };
 
-            edge.ip_addresses
-                .iter()
-                .filter_map(|ip| {
-                    let matches_query = match record_type {
-                        RecordType::A => ip.parse::<std::net::Ipv4Addr>().is_ok(),
-                        RecordType::AAAA => ip.parse::<std::net::Ipv6Addr>().is_ok(),
-                        _ => true,
-                    };
-                    if matches_query {
-                        Some(DnsZoneRecord {
-                            name: "@".to_string(),
-                            record_type,
-                            value: ip.clone(),
-                            ttl: 60,
-                            priority: None,
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        })
+        let record_type = match qtype {
+            1 => RecordType::A,
+            28 => RecordType::AAAA,
+            _ => RecordType::A,
+        };
+
+        let records = answer_ips
+            .iter()
+            .filter_map(|ip| {
+                let matches_query = match record_type {
+                    RecordType::A => ip.parse::<std::net::Ipv4Addr>().is_ok(),
+                    RecordType::AAAA => ip.parse::<std::net::Ipv6Addr>().is_ok(),
+                    _ => true,
+                };
+                if matches_query {
+                    Some(DnsZoneRecord {
+                        name: "@".to_string(),
+                        record_type,
+                        value: ip.clone(),
+                        ttl: 60,
+                        priority: None,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        Some(records)
     }
 
+    /// Largest response a transport can carry, given the client's EDNS state.
+    ///
+    /// This is the single place a response budget is decided; every builder
+    /// receives the result explicitly instead of re-deriving it from EDNS.
+    ///
+    /// * `Udp512` (no EDNS): 512 bytes (RFC 1035 §4.2.1).
+    /// * `UdpEdns(advertised)`: the advertised CLASS clamped to
+    ///   `[EDNS_MIN_UDP_PAYLOAD, EDNS_MAX_UDP_PAYLOAD]` (RFC 6891 §6.2.5). A
+    ///   client that asks for less than 4096 is never sent more, and a client
+    ///   that asks for 64 KiB is never sent a fragmented 64 KiB datagram.
+    /// * `Tcp`/`Http`/`Quic`: 65535. Stream transports are length-prefixed and
+    ///   must not inherit the UDP budget.
+    pub(super) fn response_size_limit(transport: TransportClass) -> usize {
+        match transport {
+            TransportClass::Tcp | TransportClass::Http | TransportClass::Quic => {
+                usize::from(u16::MAX)
+            }
+            TransportClass::Udp512 => usize::from(crate::edns::EDNS_MIN_UDP_PAYLOAD),
+            TransportClass::UdpEdns(advertised) => usize::from(advertised.clamp(
+                crate::edns::EDNS_MIN_UDP_PAYLOAD,
+                crate::edns::EDNS_MAX_UDP_PAYLOAD,
+            )),
+        }
+    }
+
+    /// Answer an EDNS protocol error (BADVERS or a duplicate OPT) using the
+    /// query's own question section and EDNS state.
+    pub(super) fn build_edns_error_response(
+        parsed: &ParsedDnsQuery<'_>,
+        rcode: u8,
+        extended_rcode: u16,
+    ) -> Option<Arc<Vec<u8>>> {
+        let opt = parsed.edns.as_ref().map(|edns| {
+            super::response_encoder::build_opt_encoded_record(
+                edns.udp_payload_size,
+                edns.dnssec_ok,
+                extended_rcode,
+            )
+            .bytes
+        });
+        wire::build_error_response_with_opt(parsed.raw, rcode, opt.as_deref()).map(Arc::new)
+    }
+
+    /// Reject a query whose EDNS envelope cannot be answered normally.
+    ///
+    /// RFC 6891 §6.1.1: more than one OPT record is a FORMERR.
+    /// RFC 6891 §6.1.3: an unsupported EDNS version is answered with BADVERS
+    /// (extended RCODE 16) and the question is not answered.
+    fn edns_protocol_error(parsed: &ParsedDnsQuery<'_>) -> Option<Arc<Vec<u8>>> {
+        if parsed.duplicate_opt || parsed.malformed_edns {
+            return Self::build_edns_error_response(
+                parsed,
+                wire::RCODE_FORMERR,
+                crate::edns::EXTENDED_RCODE_NONE,
+            );
+        }
+        let edns = parsed.edns.as_ref()?;
+        if edns.version != crate::edns::EDNS_VERSION {
+            return Self::build_edns_error_response(parsed, 0, crate::edns::EXTENDED_RCODE_BADVERS);
+        }
+        None
+    }
+
+    /// Unadmitted dispatch entry: **not** for listeners.
+    ///
+    /// Phase 03 moved every listener onto [`crate::server::admit`] followed by
+    /// [`Self::serve_admitted`], which is the only dispatch entry that has
+    /// admission's token. This function remains for tests and embedded callers
+    /// that already hold a query they trust; it performs no size, firewall, or
+    /// rate-limit check.
+    ///
+    /// It applies the **stream** budget of 65535 bytes. Callers that need the
+    /// UDP budget use [`Self::handle_query_with_transport`] with a
+    /// `TransportClass::Udp*` value.
     pub fn handle_query(
         ctx: &QueryContext,
         query: &[u8],
         client_ip: Option<std::net::IpAddr>,
     ) -> Option<Arc<Vec<u8>>> {
-        let parsed = ParsedDnsQuery::parse(query).ok()?;
-        Self::handle_parsed_query(ctx, &parsed, query, client_ip)
+        Self::handle_query_with_transport(ctx, query, client_ip, TransportClass::Tcp)
     }
 
+    /// Transport-aware entry point.
+    ///
+    /// `transport_class` decides the response budget once, in
+    /// [`Self::response_size_limit`], and is threaded through the builders.
+    pub fn handle_query_with_transport(
+        ctx: &QueryContext,
+        query: &[u8],
+        client_ip: Option<std::net::IpAddr>,
+        transport_class: TransportClass,
+    ) -> Option<Arc<Vec<u8>>> {
+        let parsed = ParsedDnsQuery::parse(query).ok()?;
+        Self::handle_parsed_query(ctx, &parsed, query, client_ip, transport_class)
+    }
+
+    /// RFC 7873 server-cookie enforcement for UDP.
+    ///
+    /// DoH/DoT/DoQ are exempt: a spoofed source cannot complete the
+    /// handshake, so cookies add nothing there. On UDP, when
+    /// `dns.settings.require_cookie` is on:
+    ///
+    /// - no OPT record: the cookie cannot be returned, so REFUSED;
+    /// - no valid server cookie: BADCOOKIE (extended RCODE 23) with a fresh
+    ///   server cookie;
+    /// - a valid cookie: the query proceeds and the response carries a
+    ///   refreshed cookie.
+    fn cookie_policy(
+        ctx: &QueryContext,
+        parsed: &ParsedDnsQuery<'_>,
+        transport_class: TransportClass,
+        client_ip: Option<IpAddr>,
+    ) -> CookiePolicy {
+        // Control-plane messages are authenticated by their own path.
+        if parsed.is_notify() || parsed.is_update() {
+            return CookiePolicy::Pass { refresh: None };
+        }
+
+        if !matches!(
+            transport_class,
+            TransportClass::Udp512 | TransportClass::UdpEdns(_)
+        ) {
+            return CookiePolicy::Pass { refresh: None };
+        }
+
+        let Some(server) = ctx.cookie_server else {
+            return CookiePolicy::Pass { refresh: None };
+        };
+        if !server.require_cookie() {
+            return CookiePolicy::Pass { refresh: None };
+        }
+
+        let client_ip = client_ip.unwrap_or(IpAddr::from([127, 0, 0, 1]));
+
+        let Some(edns) = parsed.edns.as_ref() else {
+            // RFC 7873 §5.2.3 requires the fresh cookie to travel in an OPT
+            // record. Without EDNS there is no way to return one, and
+            // answering silently would defeat the control.
+            tracing::debug!(
+                client = %client_ip,
+                "Cookie required but the query carried no EDNS; refusing"
+            );
+            return CookiePolicy::Answer(
+                wire::build_error_response(parsed.raw, wire::RCODE_REFUSED)
+                    .map(Arc::new)
+                    .unwrap_or_default(),
+            );
+        };
+
+        let client_cookie = edns
+            .cookie
+            .as_ref()
+            .map(|cookie| cookie.client_cookie.clone())
+            .filter(|cookie| cookie.len() >= 8);
+        let server_cookie = edns
+            .cookie
+            .as_ref()
+            .and_then(|cookie| cookie.server_cookie.as_ref())
+            .filter(|cookie| !cookie.is_empty());
+
+        if let (Some(client_cookie), Some(server_cookie)) = (&client_cookie, server_cookie) {
+            if server.validate_cookie(client_ip, client_cookie, server_cookie) {
+                let fresh = server.generate_server_cookie(client_ip, client_cookie);
+                return CookiePolicy::Pass {
+                    refresh: Some(crate::edns::EdnsOptions::build_cookie_option(
+                        client_cookie,
+                        &fresh,
+                    )),
+                };
+            }
+        }
+
+        let (client_cookie, server_cookie) = match client_cookie {
+            // Echo the client's cookie and pair it with a fresh server
+            // cookie, so a client that merely lost ours can recover.
+            Some(client_cookie) => {
+                let server_cookie = server.generate_server_cookie(client_ip, &client_cookie);
+                (client_cookie, server_cookie)
+            }
+            None => match server.create_response_cookie(client_ip) {
+                Ok(mut cookies) => {
+                    let server_cookie = cookies.split_off(8);
+                    (cookies, server_cookie)
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "Cookie RNG failed; refusing the query");
+                    return CookiePolicy::Answer(
+                        wire::build_error_response(parsed.raw, wire::RCODE_SERVFAIL)
+                            .map(Arc::new)
+                            .unwrap_or_default(),
+                    );
+                }
+            },
+        };
+
+        let option = crate::edns::EdnsOptions::build_cookie_option(&client_cookie, &server_cookie);
+        match Self::build_badcookie_response(parsed, edns.udp_payload_size, edns.dnssec_ok, &option)
+        {
+            Some(response) => CookiePolicy::Answer(response),
+            None => CookiePolicy::Answer(
+                wire::build_error_response(parsed.raw, wire::RCODE_REFUSED)
+                    .map(Arc::new)
+                    .unwrap_or_default(),
+            ),
+        }
+    }
+
+    /// BADCOOKIE (extended RCODE 23) with the supplied COOKIE option.
+    fn build_badcookie_response(
+        parsed: &ParsedDnsQuery<'_>,
+        udp_payload_size: u16,
+        dnssec_ok: bool,
+        cookie_option: &[u8],
+    ) -> Option<Arc<Vec<u8>>> {
+        let payload = udp_payload_size.clamp(
+            crate::edns::EDNS_MIN_UDP_PAYLOAD,
+            crate::edns::EDNS_MAX_UDP_PAYLOAD,
+        );
+
+        let mut opt = Vec::with_capacity(11 + cookie_option.len());
+        opt.push(0); // NAME: root
+        opt.extend_from_slice(&41u16.to_be_bytes()); // TYPE: OPT
+        opt.extend_from_slice(&payload.to_be_bytes()); // CLASS: advertised payload
+        let mut ttl = u32::from((crate::edns::EXTENDED_RCODE_BADCOOKIE >> 4) as u8) << 24;
+        if dnssec_ok {
+            ttl |= 0x8000;
+        }
+        opt.extend_from_slice(&ttl.to_be_bytes());
+        opt.extend_from_slice(&(cookie_option.len() as u16).to_be_bytes());
+        opt.extend_from_slice(cookie_option);
+
+        // The low four bits of BADCOOKIE live in the header RCODE; the OPT
+        // TTL carries the upper eight (RFC 6891 §6.1.3).
+        let header_rcode = (crate::edns::EXTENDED_RCODE_BADCOOKIE & 0x0F) as u8;
+        wire::build_error_response_with_opt(parsed.raw, header_rcode, Some(&opt)).map(Arc::new)
+    }
+
+    /// Append a COOKIE option to the response's OPT record.
+    ///
+    /// Every response builder emits the OPT last with an empty RDLENGTH, so
+    /// the option is appended there and the length is set once.
+    fn attach_cookie_option(mut response: Vec<u8>, cookie_option: &[u8]) -> Vec<u8> {
+        if response.len() < 12 || cookie_option.is_empty() {
+            return response;
+        }
+        let qdcount = u16::from_be_bytes([response[4], response[5]]) as usize;
+        let total = u16::from_be_bytes([response[6], response[7]]) as usize
+            + u16::from_be_bytes([response[8], response[9]]) as usize
+            + u16::from_be_bytes([response[10], response[11]]) as usize;
+
+        let mut pos = 12;
+        for _ in 0..qdcount {
+            let Ok(next) = Self::skip_dns_name(&response, pos) else {
+                return response;
+            };
+            pos = next + 4;
+            if pos > response.len() {
+                return response;
+            }
+        }
+
+        for index in 0..total {
+            let Ok(next) = Self::skip_dns_name(&response, pos) else {
+                return response;
+            };
+            if next + 10 > response.len() {
+                return response;
+            }
+            let rtype = u16::from_be_bytes([response[next], response[next + 1]]);
+            let rdlen = u16::from_be_bytes([response[next + 8], response[next + 9]]) as usize;
+            let rd_start = next + 10;
+            if rd_start + rdlen > response.len() {
+                return response;
+            }
+            if rtype == 41 && rdlen == 0 && index + 1 == total {
+                response[next + 8..next + 10]
+                    .copy_from_slice(&(cookie_option.len() as u16).to_be_bytes());
+                response.extend_from_slice(cookie_option);
+                return response;
+            }
+            pos = rd_start + rdlen;
+        }
+
+        response
+    }
+
+    /// Dispatch one parsed query.
+    ///
+    /// The DNS-cookie gate runs here, once, for every transport and before
+    /// the answer cache: a BADCOOKIE challenge is per-client state and must
+    /// never be served from, or written to, a shared cache entry.
     pub(super) fn handle_parsed_query(
         ctx: &QueryContext,
         parsed: &ParsedDnsQuery<'_>,
         query: &[u8],
         client_ip: Option<std::net::IpAddr>,
+        transport_class: TransportClass,
     ) -> Option<Arc<Vec<u8>>> {
-        use crate::server::RecordTypeExt;
+        match Self::cookie_policy(ctx, parsed, transport_class, client_ip) {
+            CookiePolicy::Answer(response) => Some(response),
+            CookiePolicy::Pass { refresh: None } => {
+                Self::handle_parsed_query_inner(ctx, parsed, query, client_ip, transport_class)
+            }
+            CookiePolicy::Pass {
+                refresh: Some(cookie_option),
+            } => Self::handle_parsed_query_inner(ctx, parsed, query, client_ip, transport_class)
+                .map(|response| {
+                    let refreshed = Self::attach_cookie_option((*response).clone(), &cookie_option);
+                    let budget = Self::response_size_limit(transport_class);
+                    if refreshed.len() <= budget {
+                        Arc::new(refreshed)
+                    } else {
+                        // The refreshed cookie does not fit the client's
+                        // advertised budget. The answer is still valid; the
+                        // refresh is advisory (RFC 7873 §5.2.3).
+                        response
+                    }
+                }),
+        }
+    }
+
+    fn handle_parsed_query_inner(
+        ctx: &QueryContext,
+        parsed: &ParsedDnsQuery<'_>,
+        query: &[u8],
+        client_ip: Option<std::net::IpAddr>,
+        transport_class: TransportClass,
+    ) -> Option<Arc<Vec<u8>>> {
+        if let Some(response) = Self::edns_protocol_error(parsed) {
+            return Some(response);
+        }
 
         let query_id = parsed.id;
         let rd = parsed.flags.recursion_desired;
+        // The client's question section, echoed verbatim into every response.
+        let question_bytes = &parsed.raw[12..parsed.question_end];
+        let max_size = Self::response_size_limit(transport_class);
 
         if parsed.is_notify() {
             if let Some(handler) = ctx.notify_handler {
@@ -951,41 +1206,29 @@ impl DnsServer {
         if parsed.is_update() {
             if let Some(handler) = ctx.update_handler {
                 if let Some(ip) = client_ip {
-                    match handler.handle_update(query, ip) {
-                        Ok(response) => return Some(Arc::new(response)),
-                        Err(_) => return None,
-                    }
+                    return match handler.handle_update(query, ip) {
+                        Ok(response) => Some(Arc::new(response)),
+                        // Answer the refusal: a dropped UPDATE is
+                        // indistinguishable from a lost packet.
+                        Err(e) => {
+                            tracing::warn!("UPDATE failed: {} (rcode {})", e, e.rcode);
+                            wire::build_error_response(query, e.rcode).map(Arc::new)
+                        }
+                    };
                 }
             }
             return None;
         }
 
-        let mut edns_options = parse_edns_options(query);
+        // The OPT record was parsed once, when the query was parsed. No
+        // positional sniffing here: a second parse is a second assumption.
+        let mut edns_options = parsed.edns.clone();
 
         if let Some(ref mut edns) = edns_options {
             crate::edns::filter_ecs(edns, ctx.ecs_filter_config);
         }
 
         let dnssec_ok = edns_options.as_ref().map(|e| e.dnssec_ok).unwrap_or(false);
-
-        let mut cookie_valid = false;
-        let mut cookie_absent = false;
-        let client_ip_for_log = client_ip.unwrap_or(IpAddr::from([127, 0, 0, 1]));
-        if let (Some(cs), Some(edns)) = (ctx.cookie_server, &edns_options) {
-            if let Some(ref cookie) = edns.cookie {
-                if let Some(ref server_cookie) = cookie.server_cookie {
-                    cookie_valid =
-                        cs.validate_cookie(client_ip_for_log, &cookie.client_cookie, server_cookie);
-                } else {
-                    cookie_absent = true;
-                }
-            } else {
-                cookie_absent = true;
-            }
-            if !cookie_valid && !cookie_absent {
-                tracing::debug!("Invalid DNS cookie from {}", client_ip_for_log);
-            }
-        }
 
         let qname_lower = parsed.qname.to_lowercase();
 
@@ -1007,6 +1250,8 @@ impl DnsServer {
                             &parsed.qname,
                             &txt_value,
                             edns_options.as_ref(),
+                            max_size,
+                            question_bytes,
                         );
                         return Some(resp);
                     }
@@ -1030,6 +1275,7 @@ impl DnsServer {
                         &parsed.qname,
                         parsed.qtype,
                         edns_options.as_ref(),
+                        question_bytes,
                     );
                     return Some(resp);
                 }
@@ -1040,6 +1286,7 @@ impl DnsServer {
                     &parsed.qname,
                     parsed.qtype,
                     edns_options.as_ref(),
+                    question_bytes,
                 );
                 return Some(resp);
             }
@@ -1055,24 +1302,42 @@ impl DnsServer {
                 "Zone has no SOA record, returning SERVFAIL"
             );
             let flags = crate::parsed_query::build_response_flags(true, false, rd, false, false, 2);
-            let question = super::wire::build_question(&parsed.qname, parsed.qtype, 1);
             let has_opt = edns_options.is_some();
             let arcount: u16 = if has_opt { 1 } else { 0 };
-            let mut packet = Vec::with_capacity(12 + question.len() + 16);
+            let mut packet = Vec::with_capacity(12 + question_bytes.len() + 16);
             packet.extend_from_slice(&parsed.id.to_be_bytes());
             packet.extend_from_slice(&flags.to_be_bytes());
             packet.extend_from_slice(&1u16.to_be_bytes());
             packet.extend_from_slice(&0u16.to_be_bytes());
             packet.extend_from_slice(&0u16.to_be_bytes());
             packet.extend_from_slice(&arcount.to_be_bytes());
-            packet.extend_from_slice(&question);
+            packet.extend_from_slice(question_bytes);
             if let Some(edns) = edns_options {
-                let opt =
-                    super::response_encoder::build_opt_encoded_record(edns.udp_payload_size, false);
+                let opt = super::response_encoder::build_opt_encoded_record(
+                    edns.udp_payload_size,
+                    edns.dnssec_ok,
+                    crate::edns::EXTENDED_RCODE_NONE,
+                );
                 packet.extend_from_slice(&opt.bytes);
             }
             return Some(Arc::new(packet));
         }
+
+        // RFC 4035 §2.2: a zone signs with both keys or not at all. Startup
+        // rejects a half-configured signed zone; this is the query-path
+        // defense for a zone that bypassed it — fail closed, do not serve a
+        // mix of signed and unsigned RRsets.
+        let signing = match Self::signing_keys_for_zone(
+            &zone,
+            query_id,
+            &parsed.qname,
+            rd,
+            edns_options.as_ref(),
+            question_bytes,
+        ) {
+            Ok(signing) => signing,
+            Err(resp) => return Some(resp),
+        };
 
         let origin_canonical = origin_str.clone();
         let origin_lower_for_strip = origin_canonical.trim_end_matches('.').to_lowercase();
@@ -1092,54 +1357,13 @@ impl DnsServer {
             }
         };
 
-        let key = (lookup_name.clone(), record_type);
-        if let Some(records) = zone.records.get(&key) {
-            let (resp, _report) = Self::build_response(
-                query_id,
-                &parsed.qname,
-                parsed.qtype,
-                records,
-                dnssec_ok,
-                edns_options.as_ref(),
-                zone.zsk_key.as_deref(),
-                &origin_canonical,
-                rd,
-            );
-            return Some(resp);
-        }
+        // ── R1: one authoritative lookup, used by the signed and the
+        // unsigned path. The outcome describes what the zone holds; response
+        // construction, signing and phase-05 proof selection happen below.
+        let outcome = zone.lookup(&parsed.qname, record_type);
 
-        if record_type == RecordTypeExt::UNKNOWN || record_type == RecordType::A {
-            let cname_key = (lookup_name.clone(), RecordType::CNAME);
-            if let Some(cname_records) = zone.records.get(&cname_key) {
-                if let Some(cname) = cname_records.first() {
-                    let cname_target = cname.value.trim_end_matches('.');
-                    let qname_stripped = parsed.qname.trim_end_matches('.');
-                    if cname_target.eq_ignore_ascii_case(qname_stripped) {
-                        tracing::warn!("CNAME loop detected for {}", parsed.qname);
-                        let (resp, _report) = Self::build_refused(
-                            parsed.id,
-                            &parsed.qname,
-                            parsed.qtype,
-                            edns_options.as_ref(),
-                        );
-                        return Some(resp);
-                    }
-                }
-                let (resp, _report) = Self::build_response(
-                    query_id,
-                    &parsed.qname,
-                    parsed.qtype,
-                    cname_records,
-                    dnssec_ok,
-                    edns_options.as_ref(),
-                    zone.zsk_key.as_deref(),
-                    &origin_canonical,
-                    rd,
-                );
-                return Some(resp);
-            }
-        }
-
+        // ANY is answered from every RRset at the owner, which is not an
+        // ordinary single-type lookup; it runs before the negative branches.
         if parsed.qtype == 255 {
             let mut all_records = Vec::new();
             let mut seen_cname = false;
@@ -1178,101 +1402,302 @@ impl DnsServer {
                     &all_records,
                     dnssec_ok,
                     edns_options.as_ref(),
-                    zone.zsk_key.as_deref(),
+                    max_size,
+                    signing.as_ref(),
                     &origin_canonical,
                     rd,
+                    question_bytes,
                 );
                 return Some(resp);
-            }
-
-            if record_type == RecordType::DNSKEY && qname_lower_trimmed == origin_lower_for_strip {
-                let dnskey_records = Self::build_dnskey_records(&zone);
-                let (resp, _report) = Self::build_response(
-                    query_id,
-                    &parsed.qname,
-                    parsed.qtype,
-                    &dnskey_records,
-                    dnssec_ok,
-                    edns_options.as_ref(),
-                    zone.ksk_key.as_deref(),
-                    &origin_canonical,
-                    rd,
-                );
-                return Some(resp);
-            }
-
-            if parsed.qtype == 59 && qname_lower_trimmed == origin_lower_for_strip {
-                if let Some(ksk) = &zone.ksk_key {
-                    let cds_records = Self::build_cds_records(ksk);
-                    let (resp, _report) = Self::build_response(
-                        query_id,
-                        &parsed.qname,
-                        parsed.qtype,
-                        &cds_records,
-                        dnssec_ok,
-                        edns_options.as_ref(),
-                        zone.ksk_key.as_deref(),
-                        &origin_canonical,
-                        rd,
-                    );
-                    return Some(resp);
-                }
-            }
-
-            if parsed.qtype == 60 && qname_lower_trimmed == origin_lower_for_strip {
-                let cdnskey_records = Self::build_cdnskey_records(&zone);
-                let (resp, _report) = Self::build_response(
-                    query_id,
-                    &parsed.qname,
-                    parsed.qtype,
-                    &cdnskey_records,
-                    dnssec_ok,
-                    edns_options.as_ref(),
-                    zone.ksk_key.as_deref(),
-                    &origin_canonical,
-                    rd,
-                );
-                return Some(resp);
-            }
-
-            if record_type == RecordType::DS && qname_lower_trimmed == origin_lower_for_strip {
-                if let Some(ksk) = &zone.ksk_key {
-                    let ds_records = Self::build_ds_records(ksk);
-                    let (resp, _report) = Self::build_response(
-                        query_id,
-                        &parsed.qname,
-                        parsed.qtype,
-                        &ds_records,
-                        dnssec_ok,
-                        edns_options.as_ref(),
-                        zone.ksk_key.as_deref(),
-                        &origin_canonical,
-                        rd,
-                    );
-                    return Some(resp);
-                }
-            }
-
-            if record_type == RecordType::NSEC3PARAM
-                && qname_lower_trimmed == origin_lower_for_strip
-            {
-                if let Some(nsec3param_record) = Self::build_nsec3param_record(&zone) {
-                    let (resp, _report) = Self::build_response(
-                        query_id,
-                        &parsed.qname,
-                        parsed.qtype,
-                        &[nsec3param_record],
-                        dnssec_ok,
-                        edns_options.as_ref(),
-                        zone.zsk_key.as_deref(),
-                        &origin_canonical,
-                        rd,
-                    );
-                    return Some(resp);
-                }
             }
         }
 
+        match &outcome {
+            LookupOutcome::Answer { records, .. } => {
+                let (resp, _report) = Self::build_response(
+                    query_id,
+                    &parsed.qname,
+                    parsed.qtype,
+                    records,
+                    dnssec_ok,
+                    edns_options.as_ref(),
+                    max_size,
+                    signing.as_ref(),
+                    &origin_canonical,
+                    rd,
+                    question_bytes,
+                );
+                return Some(resp);
+            }
+            LookupOutcome::Cname { records } => {
+                let (resp, _report) = Self::build_response(
+                    query_id,
+                    &parsed.qname,
+                    parsed.qtype,
+                    records,
+                    dnssec_ok,
+                    edns_options.as_ref(),
+                    max_size,
+                    signing.as_ref(),
+                    &origin_canonical,
+                    rd,
+                    question_bytes,
+                );
+                return Some(resp);
+            }
+            LookupOutcome::WildcardAnswer { wildcard, records } => {
+                // RFC 4035 §3.1.3.3: a wildcard expansion carries the
+                // next-closer non-existence proof. A signed zone that cannot
+                // select it must not answer.
+                let proof = if dnssec_ok && (zone.nsec_enabled || zone.nsec3_enabled) {
+                    let mode = if zone.nsec3_enabled {
+                        DenialMode::Nsec3
+                    } else {
+                        DenialMode::Nsec
+                    };
+                    zone.denial()
+                        .proof(mode, DenialKind::WildcardAnswer, &parsed.qname)
+                } else {
+                    None
+                };
+                if proof.is_none() && signing.is_some() && dnssec_ok {
+                    tracing::error!(
+                        qname = %parsed.qname,
+                        zone = %zone.origin,
+                        wildcard = %wildcard,
+                        "DNSSEC: signed zone cannot select the wildcard next-closer proof; returning SERVFAIL"
+                    );
+                    metrics::counter!("dns_dnssec_denial_failure_total").increment(1);
+                    return Some(Self::servfail_packet(
+                        parsed.id,
+                        rd,
+                        edns_options.as_ref(),
+                        question_bytes,
+                    ));
+                }
+                let empty: Vec<Arc<DnsZoneRecord>> = Vec::new();
+                let resp = Self::build_wildcard_response(
+                    query_id,
+                    &parsed.qname,
+                    parsed.qtype,
+                    wildcard,
+                    records,
+                    proof.as_ref().unwrap_or(&empty),
+                    dnssec_ok,
+                    edns_options.as_ref(),
+                    max_size,
+                    signing.as_ref(),
+                    &origin_canonical,
+                    rd,
+                    question_bytes,
+                );
+                return Some(resp);
+            }
+            LookupOutcome::Dname { answer } => {
+                // RFC 6672 §3.1/§5.3.1: the DNAME is signed, the synthesized
+                // CNAME is not, and both are in the answer section.
+                let resp = Self::build_dname_response(
+                    query_id,
+                    &parsed.qname,
+                    parsed.qtype,
+                    answer,
+                    dnssec_ok,
+                    edns_options.as_ref(),
+                    max_size,
+                    signing.as_ref(),
+                    &origin_canonical,
+                    rd,
+                    question_bytes,
+                );
+                return Some(resp);
+            }
+            LookupOutcome::Referral {
+                delegation,
+                authority,
+                additional,
+            } => {
+                // RFC 4035 §3.1.4.1: a secure delegation carries its DS RRset;
+                // an insecure one carries the proof that no DS exists.
+                let mut proof: Vec<DnsZoneRecord> = Vec::new();
+                match zone.rrset(delegation, RecordType::DS) {
+                    Some(ds) if !ds.is_empty() => proof.extend(ds.iter().cloned()),
+                    _ => {
+                        if dnssec_ok && (zone.nsec_enabled || zone.nsec3_enabled) {
+                            let mode = if zone.nsec3_enabled {
+                                DenialMode::Nsec3
+                            } else {
+                                DenialMode::Nsec
+                            };
+                            match zone.denial().proof(mode, DenialKind::NoData, delegation) {
+                                Some(records) => proof
+                                    .extend(records.iter().map(|record| record.as_ref().clone())),
+                                None if signing.is_some() => {
+                                    tracing::error!(
+                                        zone = %zone.origin,
+                                        delegation = %delegation,
+                                        "DNSSEC: no proof of the delegation's DS state; returning SERVFAIL"
+                                    );
+                                    metrics::counter!("dns_dnssec_denial_failure_total")
+                                        .increment(1);
+                                    return Some(Self::servfail_packet(
+                                        parsed.id,
+                                        rd,
+                                        edns_options.as_ref(),
+                                        question_bytes,
+                                    ));
+                                }
+                                None => {}
+                            }
+                        }
+                    }
+                }
+                let resp = Self::build_referral_response(
+                    query_id,
+                    &parsed.qname,
+                    parsed.qtype,
+                    authority,
+                    additional,
+                    &proof,
+                    dnssec_ok,
+                    edns_options.as_ref(),
+                    max_size,
+                    signing.as_ref(),
+                    &origin_canonical,
+                    rd,
+                    question_bytes,
+                );
+                return Some(resp);
+            }
+            LookupOutcome::Loop => {
+                tracing::warn!("CNAME loop detected for {}", parsed.qname);
+                let (resp, _report) = Self::build_refused(
+                    parsed.id,
+                    &parsed.qname,
+                    parsed.qtype,
+                    edns_options.as_ref(),
+                    question_bytes,
+                );
+                return Some(resp);
+            }
+            LookupOutcome::DnameOverflow => {
+                // RFC 6672 §3.2: a substitution that overflows the legal name
+                // length is YXDOMAIN, not a truncated name.
+                return Some(Self::build_rcode_response(
+                    query_id,
+                    &parsed.qname,
+                    parsed.qtype,
+                    crate::wire::UPDATE_RCODE_YXDOMAIN,
+                    edns_options.as_ref(),
+                    max_size,
+                    rd,
+                    question_bytes,
+                ));
+            }
+            // Negative outcomes are answered below, after the synthetic apex
+            // RRsets and the mesh/DNS64 fallbacks.
+            LookupOutcome::NoData
+            | LookupOutcome::EmptyNonTerminal
+            | LookupOutcome::WildcardNoData { .. }
+            | LookupOutcome::NxDomain => {}
+        }
+
+        // DNSSEC key material at the zone apex is built from the zone's key
+        // handles rather than looked up in `records`, so these branches must
+        // run for their own qtype — not only inside the ANY (255) block.
+        if record_type == RecordType::DNSKEY && qname_lower_trimmed == origin_lower_for_strip {
+            let dnskey_records = Self::build_dnskey_records(&zone);
+            let (resp, _report) = Self::build_response(
+                query_id,
+                &parsed.qname,
+                parsed.qtype,
+                &dnskey_records,
+                dnssec_ok,
+                edns_options.as_ref(),
+                max_size,
+                signing.as_ref(),
+                &origin_canonical,
+                rd,
+                question_bytes,
+            );
+            return Some(resp);
+        }
+
+        if parsed.qtype == 59 && qname_lower_trimmed == origin_lower_for_strip {
+            if let Some(ksk) = &zone.ksk_key {
+                let cds_records = Self::build_cds_records(ksk);
+                let (resp, _report) = Self::build_response(
+                    query_id,
+                    &parsed.qname,
+                    parsed.qtype,
+                    &cds_records,
+                    dnssec_ok,
+                    edns_options.as_ref(),
+                    max_size,
+                    signing.as_ref(),
+                    &origin_canonical,
+                    rd,
+                    question_bytes,
+                );
+                return Some(resp);
+            }
+        }
+
+        if parsed.qtype == 60 && qname_lower_trimmed == origin_lower_for_strip {
+            let cdnskey_records = Self::build_cdnskey_records(&zone);
+            let (resp, _report) = Self::build_response(
+                query_id,
+                &parsed.qname,
+                parsed.qtype,
+                &cdnskey_records,
+                dnssec_ok,
+                edns_options.as_ref(),
+                max_size,
+                signing.as_ref(),
+                &origin_canonical,
+                rd,
+                question_bytes,
+            );
+            return Some(resp);
+        }
+
+        if record_type == RecordType::DS && qname_lower_trimmed == origin_lower_for_strip {
+            if let Some(ksk) = &zone.ksk_key {
+                let ds_records = Self::build_ds_records(ksk);
+                let (resp, _report) = Self::build_response(
+                    query_id,
+                    &parsed.qname,
+                    parsed.qtype,
+                    &ds_records,
+                    dnssec_ok,
+                    edns_options.as_ref(),
+                    max_size,
+                    signing.as_ref(),
+                    &origin_canonical,
+                    rd,
+                    question_bytes,
+                );
+                return Some(resp);
+            }
+        }
+
+        if record_type == RecordType::NSEC3PARAM && qname_lower_trimmed == origin_lower_for_strip {
+            if let Some(nsec3param_record) = Self::build_nsec3param_record(&zone) {
+                let (resp, _report) = Self::build_response(
+                    query_id,
+                    &parsed.qname,
+                    parsed.qtype,
+                    &[nsec3param_record],
+                    dnssec_ok,
+                    edns_options.as_ref(),
+                    max_size,
+                    signing.as_ref(),
+                    &origin_canonical,
+                    rd,
+                    question_bytes,
+                );
+                return Some(resp);
+            }
+        }
         #[cfg(feature = "mesh")]
         if let (Some(registry), Some(ip)) = (ctx.mesh_registry, client_ip) {
             if let Some(mesh_records) =
@@ -1281,7 +1706,16 @@ impl DnsServer {
                 if !mesh_records.is_empty() {
                     tracing::debug!("Resolved {} from mesh network", parsed.qname);
                     let mesh_zone = ctx.zones.find_by_suffix(&parsed.qname);
-                    let zsk = mesh_zone.as_ref().and_then(|zone| zone.zsk_key.as_deref());
+                    // Mesh records are synthesized under the queried name, so
+                    // the signer name is the covering zone's apex when there is
+                    // one; without a zone the answer is not signable.
+                    let (mesh_signing, mesh_origin) = match mesh_zone.as_ref() {
+                        Some(zone) => (
+                            ZoneSigningKeys::from_zone(zone).ok().flatten(),
+                            zone.origin.clone(),
+                        ),
+                        None => (None, parsed.qname.clone()),
+                    };
                     let (resp, _report) = Self::build_response(
                         query_id,
                         &parsed.qname,
@@ -1289,9 +1723,11 @@ impl DnsServer {
                         &mesh_records,
                         dnssec_ok,
                         edns_options.as_ref(),
-                        zsk,
-                        &parsed.qname,
+                        max_size,
+                        mesh_signing.as_ref(),
+                        &mesh_origin,
                         rd,
+                        question_bytes,
                     );
                     return Some(resp);
                 }
@@ -1303,8 +1739,7 @@ impl DnsServer {
             if let Some(translator) = ctx.dns64_translator {
                 if translator.should_synthesize(28, client_ip) {
                     if let Some(zone) = ctx.zones.find_by_suffix(&parsed.qname) {
-                        let a_key = (lookup_name.clone(), RecordType::A);
-                        if let Some(a_records) = zone.records.get(&a_key) {
+                        if let Some(a_records) = zone.rrset(&parsed.qname, RecordType::A) {
                             let aaaa_records: Vec<DnsZoneRecord> = a_records
                                 .iter()
                                 .filter_map(|rec| {
@@ -1326,10 +1761,9 @@ impl DnsServer {
                                     aaaa_records.len(),
                                     parsed.qname
                                 );
-                                let origin = qname_lower
-                                    .split_once('.')
-                                    .map(|(_, suffix)| format!(".{}", suffix))
-                                    .unwrap_or_else(|| qname_lower.clone());
+                                // The owner is built from (record.name, zone origin);
+                                // a suffix of the qname is not the origin.
+                                let origin = zone.origin.clone();
                                 let (resp, _report) = Self::build_response(
                                     query_id,
                                     &parsed.qname,
@@ -1337,9 +1771,11 @@ impl DnsServer {
                                     &aaaa_records,
                                     dnssec_ok,
                                     edns_options.as_ref(),
+                                    max_size,
                                     None,
                                     &origin,
                                     rd,
+                                    question_bytes,
                                 );
                                 return Some(resp);
                             }
@@ -1349,154 +1785,202 @@ impl DnsServer {
             }
         }
 
-        if dnssec_ok {
-            // Check for NODATA: name exists but requested type does not
-            // Use suffix index for O(k) lookup instead of O(n) full scan
-            if let Some(zone) = ctx.zones.find_by_suffix_with_filter(&parsed.qname, |zone| {
-                (zone.nsec_enabled || zone.nsec3_enabled)
-                    && Self::is_nodata(zone, &parsed.qname, record_type)
-            }) {
-                let origin = zone.origin.clone();
-                let soa_record = zone
-                    .records
-                    .get(&("@".to_string(), RecordType::SOA))
-                    .and_then(|records| records.first().cloned());
-                if zone.nsec3_enabled {
-                    let nsec3_records = Self::build_nsec3_nodata(&zone, &parsed.qname, record_type);
-                    let zsk = zone.zsk_key.as_deref();
-                    return Some(Self::build_nodata_response(
-                        parsed.id,
-                        &parsed.qname,
-                        parsed.qtype,
-                        &nsec3_records,
-                        50,
-                        dnssec_ok,
-                        edns_options.as_ref(),
-                        zsk,
-                        origin.as_str(),
-                        soa_record.as_ref(),
-                        rd,
-                    ));
-                } else if zone.nsec_enabled {
-                    let nsec_records = Self::build_nsec_records(&zone, &parsed.qname, record_type);
-                    let zsk = zone.zsk_key.as_deref();
-                    return Some(Self::build_nodata_response(
-                        parsed.id,
-                        &parsed.qname,
-                        parsed.qtype,
-                        &nsec_records,
-                        47,
-                        dnssec_ok,
-                        edns_options.as_ref(),
-                        zsk,
-                        origin.as_str(),
-                        soa_record.as_ref(),
-                        rd,
-                    ));
+        // Only a negative outcome reaches this point. The proof kind is a
+        // property of the lookup outcome, not a second guess at the data:
+        // an owner (or empty non-terminal) is NODATA, a matched wildcard with
+        // no RRset of the qtype is wildcard NODATA, everything else is a name
+        // error.
+        if dnssec_ok && (zone.nsec_enabled || zone.nsec3_enabled) {
+            let mode = if zone.nsec3_enabled {
+                DenialMode::Nsec3
+            } else {
+                DenialMode::Nsec
+            };
+            let kind = match &outcome {
+                LookupOutcome::NoData => DenialKind::NoData,
+                // An empty non-terminal has no NSEC of its own, so RFC 4035
+                // §3.1.3.2 proves its NODATA with the name-error form; RFC
+                // 5155 §7.2.3 gives every ENT its own empty-bitmap NSEC3, so
+                // there it is ordinary NODATA.
+                LookupOutcome::EmptyNonTerminal => {
+                    if mode == DenialMode::Nsec3 {
+                        DenialKind::NoData
+                    } else {
+                        DenialKind::NxDomain
+                    }
+                }
+                LookupOutcome::WildcardNoData { .. } => DenialKind::WildcardNoData,
+                _ => DenialKind::NxDomain,
+            };
+
+            if let Some(proof) = zone.denial().proof(mode, kind, &parsed.qname) {
+                if !proof.is_empty() {
+                    let origin = zone.origin.clone();
+                    let soa_record = zone.get_soa();
+                    return Some(
+                        if matches!(kind, DenialKind::NoData | DenialKind::WildcardNoData) {
+                            Self::build_nodata_response(
+                                parsed.id,
+                                &parsed.qname,
+                                parsed.qtype,
+                                &proof,
+                                dnssec_ok,
+                                edns_options.as_ref(),
+                                max_size,
+                                signing.as_ref(),
+                                origin.as_str(),
+                                soa_record.as_ref(),
+                                rd,
+                                question_bytes,
+                            )
+                        } else {
+                            Self::build_nxdomain_response(
+                                parsed.id,
+                                &parsed.qname,
+                                parsed.qtype,
+                                &proof,
+                                dnssec_ok,
+                                edns_options.as_ref(),
+                                max_size,
+                                signing.as_ref(),
+                                origin.as_str(),
+                                soa_record.as_ref(),
+                                rd,
+                                question_bytes,
+                            )
+                        },
+                    );
                 }
             }
 
-            // NXDOMAIN NSEC/NSEC3 proof
-            // Use suffix index for O(k) lookup instead of O(n) full scan
-            if let Some(zone) = ctx.zones.find_by_suffix_with_filter(&parsed.qname, |zone| {
-                zone.nsec_enabled || zone.nsec3_enabled
-            }) {
-                let origin = zone.origin.clone();
-                let soa_record = zone
-                    .records
-                    .get(&("@".to_string(), RecordType::SOA))
-                    .and_then(|records| records.first().cloned());
-                if zone.nsec_enabled {
-                    let nsec_records = Self::build_nsec_records(&zone, &parsed.qname, record_type);
-                    if !nsec_records.is_empty() {
-                        let zsk = zone.zsk_key.as_deref();
-                        return Some(Self::build_nxdomain_response(
-                            parsed.id,
-                            &parsed.qname,
-                            parsed.qtype,
-                            &nsec_records,
-                            47,
-                            dnssec_ok,
-                            edns_options.as_ref(),
-                            zsk,
-                            origin.as_str(),
-                            soa_record.as_ref(),
-                            rd,
-                        ));
-                    }
-                } else if zone.nsec3_enabled {
-                    let nsec3_records =
-                        Self::build_nsec3_records(&zone, &parsed.qname, record_type);
-                    if !nsec3_records.is_empty() {
-                        let zsk = zone.zsk_key.as_deref();
-                        return Some(Self::build_nxdomain_response(
-                            parsed.id,
-                            &parsed.qname,
-                            parsed.qtype,
-                            &nsec3_records,
-                            50,
-                            dnssec_ok,
-                            edns_options.as_ref(),
-                            zsk,
-                            origin.as_str(),
-                            soa_record.as_ref(),
-                            rd,
-                        ));
-                    }
-                }
+            if signing.is_some() {
+                tracing::error!(
+                    qname = %parsed.qname,
+                    zone = %zone.origin,
+                    mode = ?mode,
+                    kind = ?kind,
+                    "DNSSEC: signed zone cannot select a denial proof; returning SERVFAIL"
+                );
+                metrics::counter!("dns_dnssec_denial_failure_total").increment(1);
+                return Some(Self::servfail_packet(
+                    parsed.id,
+                    rd,
+                    edns_options.as_ref(),
+                    question_bytes,
+                ));
             }
         }
 
-        let outcome = zone.lookup_authoritative(&lookup_name, parsed.qtype);
-        match outcome {
-            AuthoritativeLookupOutcome::NoData { soa, .. } => {
-                let (resp, _report) = Self::build_unsigned_nodata(
-                    parsed.id,
-                    &parsed.qname,
-                    parsed.qtype,
-                    soa.as_ref(),
-                    edns_options.as_ref(),
-                    ctx.negative_cache_ttl,
-                    rd,
-                );
-                Some(resp)
-            }
-            AuthoritativeLookupOutcome::NxDomain { soa, .. } => {
-                let (resp, _report) = Self::build_unsigned_nxdomain(
-                    parsed.id,
-                    &parsed.qname,
-                    parsed.qtype,
-                    soa.as_ref(),
-                    edns_options.as_ref(),
-                    ctx.negative_cache_ttl,
-                    rd,
-                );
-                Some(resp)
-            }
-            _ => None,
-        }
+        let soa = zone.get_soa();
+        let is_nxdomain = matches!(outcome, LookupOutcome::NxDomain);
+        Some(if is_nxdomain {
+            let (resp, _report) = Self::build_unsigned_nxdomain(
+                parsed.id,
+                &parsed.qname,
+                parsed.qtype,
+                soa.as_ref(),
+                edns_options.as_ref(),
+                max_size,
+                ctx.negative_cache_ttl,
+                rd,
+                origin_str.as_str(),
+                question_bytes,
+            );
+            resp
+        } else {
+            let (resp, _report) = Self::build_unsigned_nodata(
+                parsed.id,
+                &parsed.qname,
+                parsed.qtype,
+                soa.as_ref(),
+                edns_options.as_ref(),
+                max_size,
+                ctx.negative_cache_ttl,
+                rd,
+                origin_str.as_str(),
+                question_bytes,
+            );
+            resp
+        })
     }
 
+    /// Append one authority-section RRset, followed by its RRSIG when the
+    /// zone is signed.
+    ///
+    /// Returns `false` if the record, its signature, or the RRSIG's encoding
+    /// fails. The caller must then answer SERVFAIL: an RRset served without
+    /// its RRSIG (or an RRSIG without its RRset) is not a truthful negative
+    /// answer (RFC 4035 §3.1.3, finding L4).
+    pub(super) fn push_authority_rrset(
+        envelope: &mut super::response_encoder::ResponseEnvelope,
+        record: &DnsZoneRecord,
+        origin: &str,
+        signing: Option<&ZoneSigningKeys<'_>>,
+    ) -> bool {
+        use super::response_encoder::{encode_rr, DnsSection};
+
+        let Ok(mut encoded) = encode_rr(record, origin, None) else {
+            tracing::error!(
+                owner = %record.name,
+                record_type = ?record.record_type,
+                "DNS encode: authority record failed; returning SERVFAIL"
+            );
+            return false;
+        };
+        encoded.section = DnsSection::Authority;
+        envelope.authority_records.push(encoded);
+
+        let Some(keys) = signing else {
+            return true;
+        };
+
+        let Ok(rrsig) = Self::create_signed_rrsig(&[record], origin, keys) else {
+            return false;
+        };
+        let rrsig_record = DnsZoneRecord {
+            name: record.name.clone(),
+            record_type: RecordType::RRSIG,
+            value: hex::encode(&rrsig),
+            ttl: record.ttl,
+            priority: None,
+        };
+        let Ok(mut encoded) = encode_rr(&rrsig_record, origin, None) else {
+            tracing::error!(
+                owner = %record.name,
+                "DNS encode: RRSIG failed; refusing to serve the unsigned RRset"
+            );
+            return false;
+        };
+        encoded.section = DnsSection::Authority;
+        envelope.authority_records.push(encoded);
+        true
+    }
+
+    /// Build an authoritative NXDOMAIN with its NSEC/NSEC3 proof.
+    ///
+    /// A signed zone answers with the SOA **and its RRSIG** (RFC 4035
+    /// §3.1.3), then the denial proof and its RRSIG; the SOA and the proof are
+    /// signed with the ZSK by [`ZoneSigningKeys::signing_key_for`].
     #[allow(clippy::too_many_arguments)]
     pub(super) fn build_nxdomain_response(
         response_id: u16,
         qname: &str,
         qtype: u16,
-        nsec_records: &[DnsZoneRecord],
-        nsec_record_type: u16,
+        proof: &[Arc<DnsZoneRecord>],
         dnssec_ok: bool,
         edns_options: Option<&EdnsOptions>,
-        zsk: Option<&crate::dnssec::ZoneSigningKey>,
-        signer_name: &str,
+        max_size: usize,
+        signing: Option<&ZoneSigningKeys<'_>>,
+        origin: &str,
         soa_record: Option<&DnsZoneRecord>,
         rd: bool,
+        question: &[u8],
     ) -> Arc<Vec<u8>> {
-        let _ = nsec_record_type;
         use super::response_encoder::{
-            assemble_packet, build_opt_encoded_record, build_response_flags, encode_rr, DnsSection,
-            ResponseEnvelope,
+            assemble_packet, build_opt_encoded_record, build_response_flags, ResponseEnvelope,
         };
 
+        let signing = if dnssec_ok { signing } else { None };
         let mut envelope = ResponseEnvelope::default();
 
         // Fail-closed: missing SOA is an internal invariant violation.
@@ -1507,147 +1991,84 @@ impl DnsServer {
                 qname = %qname,
                 "Missing SOA record for signed NXDOMAIN response (internal invariant violation), returning SERVFAIL"
             );
-            let flags = build_response_flags(true, false, rd, false, false, 2);
-            let question = super::wire::build_question(qname, qtype, 1);
-            let has_opt = edns_options.is_some();
-            let arcount: u16 = if has_opt { 1 } else { 0 };
-            let mut packet = Vec::with_capacity(12 + question.len() + 16);
-            packet.extend_from_slice(&response_id.to_be_bytes());
-            packet.extend_from_slice(&flags.to_be_bytes());
-            packet.extend_from_slice(&1u16.to_be_bytes());
-            packet.extend_from_slice(&0u16.to_be_bytes());
-            packet.extend_from_slice(&0u16.to_be_bytes());
-            packet.extend_from_slice(&arcount.to_be_bytes());
-            packet.extend_from_slice(&question);
-            if let Some(edns) = edns_options {
-                let opt = build_opt_encoded_record(edns.udp_payload_size, false);
-                packet.extend_from_slice(&opt.bytes);
-            }
-            return Arc::new(packet);
+            return Self::servfail_packet(response_id, rd, edns_options, question);
         };
 
-        // Authority section: SOA record (RFC 2308)
-        match encode_rr(soa, None) {
-            Ok(mut rec) => {
-                rec.section = DnsSection::Authority;
-                envelope.authority_records.push(rec);
-            }
-            Err(reason) => {
-                tracing::error!(
-                    qname = %qname,
-                    reason = %reason,
-                    "DNS encode: SOA record failed for NXDOMAIN response, returning SERVFAIL"
-                );
-                let flags = build_response_flags(true, false, rd, false, false, 2);
-                let question = super::wire::build_question(qname, qtype, 1);
-                let has_opt = edns_options.is_some();
-                let arcount: u16 = if has_opt { 1 } else { 0 };
-                let mut packet = Vec::with_capacity(12 + question.len() + 16);
-                packet.extend_from_slice(&response_id.to_be_bytes());
-                packet.extend_from_slice(&flags.to_be_bytes());
-                packet.extend_from_slice(&1u16.to_be_bytes());
-                packet.extend_from_slice(&0u16.to_be_bytes());
-                packet.extend_from_slice(&0u16.to_be_bytes());
-                packet.extend_from_slice(&arcount.to_be_bytes());
-                packet.extend_from_slice(&question);
-                if let Some(edns) = edns_options {
-                    let opt = build_opt_encoded_record(edns.udp_payload_size, false);
-                    packet.extend_from_slice(&opt.bytes);
-                }
-                return Arc::new(packet);
-            }
+        // Authority section: SOA (RFC 2308) followed by its RRSIG.
+        if !Self::push_authority_rrset(&mut envelope, soa, origin, signing) {
+            tracing::error!(
+                qname = %qname,
+                "DNS encode: SOA or its RRSIG failed for NXDOMAIN response, returning SERVFAIL"
+            );
+            return Self::servfail_packet(response_id, rd, edns_options, question);
         }
 
-        // Authority section: NSEC/NSEC3 denial proof records
-        for nsec_record in nsec_records {
-            let encoded = DnsZoneRecord {
-                name: nsec_record.name.clone(),
-                record_type: nsec_record.record_type,
-                value: nsec_record.value.clone(),
-                ttl: nsec_record.ttl,
-                priority: None,
-            };
-            match encode_rr(&encoded, None) {
-                Ok(mut rec) => {
-                    rec.section = DnsSection::Authority;
-                    envelope.authority_records.push(rec);
-                }
-                Err(reason) => {
-                    tracing::error!(
-                        qname = %qname,
-                        reason = %reason,
-                        "DNS encode: NSEC/NSEC3 record failed for NXDOMAIN response"
-                    );
-                }
-            }
-
-            // RRSIG for the denial proof record
-            if dnssec_ok {
-                if let Some(key) = zsk {
-                    let rrsig = Self::create_signed_rrsig(nsec_record, signer_name, key);
-                    if !rrsig.is_empty() {
-                        let rrsig_record = DnsZoneRecord {
-                            name: nsec_record.name.clone(),
-                            record_type: RecordType::RRSIG,
-                            value: hex::encode(&rrsig),
-                            ttl: nsec_record.ttl,
-                            priority: None,
-                        };
-                        match encode_rr(&rrsig_record, None) {
-                            Ok(mut rec) => {
-                                rec.section = DnsSection::Authority;
-                                envelope.authority_records.push(rec);
-                            }
-                            Err(reason) => {
-                                tracing::error!(
-                                    qname = %qname,
-                                    reason = %reason,
-                                    "DNS encode: RRSIG record failed for NXDOMAIN response"
-                                );
-                            }
-                        }
-                    }
-                }
+        // Authority section: the selected NSEC/NSEC3 denial proof records,
+        // each followed by its RRSIG.
+        for proof_record in proof {
+            if !Self::push_authority_rrset(&mut envelope, proof_record.as_ref(), origin, signing) {
+                tracing::error!(
+                    qname = %qname,
+                    "DNS encode: denial proof or its RRSIG failed for NXDOMAIN response, returning SERVFAIL"
+                );
+                return Self::servfail_packet(response_id, rd, edns_options, question);
             }
         }
 
         // Additional section: OPT record
         if let Some(edns) = edns_options {
-            envelope
-                .additional_records
-                .push(build_opt_encoded_record(edns.udp_payload_size, dnssec_ok));
+            envelope.additional_records.push(build_opt_encoded_record(
+                edns.udp_payload_size,
+                dnssec_ok,
+                crate::edns::EXTENDED_RCODE_NONE,
+            ));
         } else if dnssec_ok {
-            envelope
-                .additional_records
-                .push(build_opt_encoded_record(4096, dnssec_ok));
+            envelope.additional_records.push(build_opt_encoded_record(
+                crate::edns::EDNS_MAX_UDP_PAYLOAD,
+                dnssec_ok,
+                crate::edns::EXTENDED_RCODE_NONE,
+            ));
         }
 
         // Authoritative servers never set AD — AD is a recursive validation signal.
         let flags = build_response_flags(true, false, rd, false, false, 3);
-        let packet = assemble_packet(&envelope, response_id, flags, qname, qtype);
-        Self::fit_to_transport(response_id, packet, qname, qtype, edns_options, rd)
+        let packet = assemble_packet(&envelope, response_id, flags, question);
+        Self::fit_to_transport(
+            response_id,
+            packet,
+            qname,
+            qtype,
+            edns_options,
+            max_size,
+            rd,
+            question,
+        )
     }
 
+    /// Build an authoritative NODATA answer with its NSEC/NSEC3 proof.
+    ///
+    /// Same rule as NXDOMAIN: the SOA is signed and its RRSIG follows it, and
+    /// the denial proof keeps its signature.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn build_nodata_response(
         response_id: u16,
         qname: &str,
         qtype: u16,
-        nsec_records: &[DnsZoneRecord],
-        nsec_record_type: u16,
+        proof: &[Arc<DnsZoneRecord>],
         dnssec_ok: bool,
         edns_options: Option<&EdnsOptions>,
-        zsk: Option<&crate::dnssec::ZoneSigningKey>,
-        signer_name: &str,
+        max_size: usize,
+        signing: Option<&ZoneSigningKeys<'_>>,
+        origin: &str,
         soa_record: Option<&DnsZoneRecord>,
         rd: bool,
+        question: &[u8],
     ) -> Arc<Vec<u8>> {
-        let _ = nsec_record_type;
         use super::response_encoder::{
-            assemble_packet, build_opt_encoded_record, build_response_flags, encode_rr, DnsSection,
-            ResponseEnvelope,
+            assemble_packet, build_opt_encoded_record, build_response_flags, ResponseEnvelope,
         };
 
+        let signing = if dnssec_ok { signing } else { None };
         let mut envelope = ResponseEnvelope::default();
 
         // Fail-closed: missing SOA is an internal invariant violation.
@@ -1658,155 +2079,95 @@ impl DnsServer {
                 qname = %qname,
                 "Missing SOA record for signed NODATA response (internal invariant violation), returning SERVFAIL"
             );
-            let flags = build_response_flags(true, false, rd, false, false, 2);
-            let question = super::wire::build_question(qname, qtype, 1);
-            let has_opt = edns_options.is_some();
-            let arcount: u16 = if has_opt { 1 } else { 0 };
-            let mut packet = Vec::with_capacity(12 + question.len() + 16);
-            packet.extend_from_slice(&response_id.to_be_bytes());
-            packet.extend_from_slice(&flags.to_be_bytes());
-            packet.extend_from_slice(&1u16.to_be_bytes());
-            packet.extend_from_slice(&0u16.to_be_bytes());
-            packet.extend_from_slice(&0u16.to_be_bytes());
-            packet.extend_from_slice(&arcount.to_be_bytes());
-            packet.extend_from_slice(&question);
-            if let Some(edns) = edns_options {
-                let opt = build_opt_encoded_record(edns.udp_payload_size, false);
-                packet.extend_from_slice(&opt.bytes);
-            }
-            return Arc::new(packet);
+            return Self::servfail_packet(response_id, rd, edns_options, question);
         };
 
-        // Authority section: SOA record (RFC 2308)
-        match encode_rr(soa, None) {
-            Ok(mut rec) => {
-                rec.section = DnsSection::Authority;
-                envelope.authority_records.push(rec);
-            }
-            Err(reason) => {
-                tracing::error!(
-                    qname = %qname,
-                    reason = %reason,
-                    "DNS encode: SOA record failed for NODATA response, returning SERVFAIL"
-                );
-                let flags = build_response_flags(true, false, rd, false, false, 2);
-                let question = super::wire::build_question(qname, qtype, 1);
-                let has_opt = edns_options.is_some();
-                let arcount: u16 = if has_opt { 1 } else { 0 };
-                let mut packet = Vec::with_capacity(12 + question.len() + 16);
-                packet.extend_from_slice(&response_id.to_be_bytes());
-                packet.extend_from_slice(&flags.to_be_bytes());
-                packet.extend_from_slice(&1u16.to_be_bytes());
-                packet.extend_from_slice(&0u16.to_be_bytes());
-                packet.extend_from_slice(&0u16.to_be_bytes());
-                packet.extend_from_slice(&arcount.to_be_bytes());
-                packet.extend_from_slice(&question);
-                if let Some(edns) = edns_options {
-                    let opt = build_opt_encoded_record(edns.udp_payload_size, false);
-                    packet.extend_from_slice(&opt.bytes);
-                }
-                return Arc::new(packet);
-            }
+        // Authority section: SOA (RFC 2308) followed by its RRSIG.
+        if !Self::push_authority_rrset(&mut envelope, soa, origin, signing) {
+            tracing::error!(
+                qname = %qname,
+                "DNS encode: SOA or its RRSIG failed for NODATA response, returning SERVFAIL"
+            );
+            return Self::servfail_packet(response_id, rd, edns_options, question);
         }
 
-        // Authority section: NSEC/NSEC3 denial proof records
-        for nsec_record in nsec_records {
-            let encoded = DnsZoneRecord {
-                name: nsec_record.name.clone(),
-                record_type: nsec_record.record_type,
-                value: nsec_record.value.clone(),
-                ttl: nsec_record.ttl,
-                priority: None,
-            };
-            match encode_rr(&encoded, None) {
-                Ok(mut rec) => {
-                    rec.section = DnsSection::Authority;
-                    envelope.authority_records.push(rec);
-                }
-                Err(reason) => {
-                    tracing::error!(
-                        qname = %qname,
-                        reason = %reason,
-                        "DNS encode: NSEC/NSEC3 record failed for NODATA response"
-                    );
-                }
-            }
-
-            // RRSIG for the denial proof record
-            if dnssec_ok {
-                if let Some(key) = zsk {
-                    let rrsig = Self::create_signed_rrsig(nsec_record, signer_name, key);
-                    if !rrsig.is_empty() {
-                        let rrsig_record = DnsZoneRecord {
-                            name: nsec_record.name.clone(),
-                            record_type: RecordType::RRSIG,
-                            value: hex::encode(&rrsig),
-                            ttl: nsec_record.ttl,
-                            priority: None,
-                        };
-                        match encode_rr(&rrsig_record, None) {
-                            Ok(mut rec) => {
-                                rec.section = DnsSection::Authority;
-                                envelope.authority_records.push(rec);
-                            }
-                            Err(reason) => {
-                                tracing::error!(
-                                    qname = %qname,
-                                    reason = %reason,
-                                    "DNS encode: RRSIG record failed for NODATA response"
-                                );
-                            }
-                        }
-                    }
-                }
+        // Authority section: the selected NSEC/NSEC3 denial proof records,
+        // each followed by its RRSIG.
+        for proof_record in proof {
+            if !Self::push_authority_rrset(&mut envelope, proof_record.as_ref(), origin, signing) {
+                tracing::error!(
+                    qname = %qname,
+                    "DNS encode: denial proof or its RRSIG failed for NODATA response, returning SERVFAIL"
+                );
+                return Self::servfail_packet(response_id, rd, edns_options, question);
             }
         }
 
         // Additional section: OPT record
         if let Some(edns) = edns_options {
-            envelope
-                .additional_records
-                .push(build_opt_encoded_record(edns.udp_payload_size, dnssec_ok));
+            envelope.additional_records.push(build_opt_encoded_record(
+                edns.udp_payload_size,
+                dnssec_ok,
+                crate::edns::EXTENDED_RCODE_NONE,
+            ));
         } else if dnssec_ok {
-            envelope
-                .additional_records
-                .push(build_opt_encoded_record(4096, dnssec_ok));
+            envelope.additional_records.push(build_opt_encoded_record(
+                crate::edns::EDNS_MAX_UDP_PAYLOAD,
+                dnssec_ok,
+                crate::edns::EXTENDED_RCODE_NONE,
+            ));
         }
 
         // NODATA: RCODE 0 (NOERROR), authoritative answer
         // Authoritative servers never set AD — AD is a recursive validation signal.
         let flags = build_response_flags(true, false, rd, false, false, 0);
-        let packet = assemble_packet(&envelope, response_id, flags, qname, qtype);
-        Self::fit_to_transport(response_id, packet, qname, qtype, edns_options, rd)
+        let packet = assemble_packet(&envelope, response_id, flags, question);
+        Self::fit_to_transport(
+            response_id,
+            packet,
+            qname,
+            qtype,
+            edns_options,
+            max_size,
+            rd,
+            question,
+        )
     }
 
-    /// Enforce the negotiated UDP payload size (512 when the client sent no
-    /// EDNS) and degrade to a TC=1 empty response when the assembled answer
-    /// does not fit.
+    /// Enforce the transport's response budget and degrade to a TC=1 empty
+    /// response when the assembled answer does not fit.
     ///
-    /// `build_response` already applies this to positive answers; the
-    /// DNSSEC-bearing NXDOMAIN/NODATA builders reach this instead so no
-    /// authoritative datagram is emitted oversized with TC=0.
-    fn fit_to_transport(
+    /// `max_size` is computed once per request by
+    /// [`Self::response_size_limit`]: the client's EDNS advertisement clamped
+    /// to `[512, 4096]` on UDP, or 65535 on a stream transport. There is no
+    /// second notion of transport here.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn fit_to_transport(
         response_id: u16,
         packet: Vec<u8>,
         qname: &str,
         qtype: u16,
         edns_options: Option<&EdnsOptions>,
+        max_size: usize,
         rd: bool,
+        question: &[u8],
     ) -> Arc<Vec<u8>> {
-        let max_size = edns_options
-            .map(|e| e.udp_payload_size as usize)
-            .unwrap_or(512);
-        if max_size > 0 && packet.len() > max_size {
+        if packet.len() > max_size {
             tracing::debug!(
                 qname = %qname,
                 response_len = packet.len(),
                 max_size = max_size,
-                "DNS authoritative response truncated for UDP transport"
+                "DNS authoritative response truncated for its transport"
             );
-            return Self::build_truncated_tc_response(response_id, qname, qtype, rd, edns_options)
-                .0;
+            return Self::build_truncated_tc_response(
+                response_id,
+                qname,
+                qtype,
+                rd,
+                edns_options,
+                question,
+            )
+            .0;
         }
         Arc::new(packet)
     }

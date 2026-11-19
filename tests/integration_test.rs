@@ -343,7 +343,7 @@ mod tests {
     mod dnssec_validation_tests {
         use synvoid::dns::dnssec_validation::{
             calculate_key_tag, canonical_dns_message, canonical_name, canonical_rdata,
-            compute_dnskey_canonical, compute_ds_digest, count_labels,
+            compute_dnskey_canonical, compute_ds_digest,
         };
 
         #[test]
@@ -385,7 +385,7 @@ mod tests {
 
         #[test]
         fn test_canonical_name_simple() {
-            let result = canonical_name("example.com");
+            let result = canonical_name("example.com.").unwrap();
             assert_eq!(
                 result,
                 vec![7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0]
@@ -394,30 +394,36 @@ mod tests {
 
         #[test]
         fn test_canonical_name_lowercase() {
-            let upper = canonical_name("EXAMPLE.COM");
-            let lower = canonical_name("example.com");
+            let upper = canonical_name("EXAMPLE.COM.").unwrap();
+            let lower = canonical_name("example.com.").unwrap();
             assert_eq!(upper, lower);
         }
 
         #[test]
-        fn test_canonical_name_trailing_dot() {
-            let with_dot = canonical_name("example.com.");
-            let without = canonical_name("example.com");
-            assert_eq!(with_dot, without);
+        fn test_canonical_name_requires_a_fqdn() {
+            // The root dot is what makes a name absolute; without it the name
+            // is relative and has no canonical form (finding L3).
+            assert!(canonical_name("example.com").is_err());
+            assert_eq!(
+                canonical_name("example.com.").unwrap(),
+                canonical_name("example.com.").unwrap()
+            );
         }
 
         #[test]
         fn test_canonical_name_empty() {
-            let result = canonical_name("");
+            let result = canonical_name("").unwrap();
             assert_eq!(result, vec![0]);
         }
 
         #[test]
-        fn test_count_labels() {
-            assert_eq!(count_labels("com"), 1);
-            assert_eq!(count_labels("example.com"), 2);
-            assert_eq!(count_labels("www.example.com"), 3);
-            assert_eq!(count_labels(""), 1);
+        fn test_owner_labels() {
+            use synvoid::dns::wire::OwnerName;
+            assert_eq!(OwnerName::new("com", "").labels(), 1);
+            assert_eq!(OwnerName::new("@", "example.com").labels(), 2);
+            assert_eq!(OwnerName::new("www", "example.com").labels(), 3);
+            assert_eq!(OwnerName::new("*", "example.com").labels(), 2);
+            assert_eq!(OwnerName::new("@", "").labels(), 0);
         }
 
         #[test]
@@ -435,7 +441,7 @@ mod tests {
         #[test]
         fn test_canonical_rdata_ns_record() {
             let result = canonical_rdata(2, "ns1.example.com", None, None, None, 300);
-            let expected = canonical_name("ns1.example.com");
+            let expected = canonical_name("ns1.example.com.").unwrap();
             assert_eq!(result, expected);
         }
 
@@ -496,9 +502,9 @@ mod tests {
         #[test]
         fn test_canonical_dns_message() {
             let rdata = vec![192, 168, 1, 1];
-            let msg = canonical_dns_message("example.com", 1, 1, 300, &rdata);
+            let msg = canonical_dns_message("example.com.", 1, 1, 300, &rdata).unwrap();
 
-            let expected_name = canonical_name("example.com");
+            let expected_name = canonical_name("example.com.").unwrap();
             assert!(msg.starts_with(&expected_name));
         }
     }

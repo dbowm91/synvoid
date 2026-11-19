@@ -31,7 +31,7 @@ pub use super::dnssec_signing::{
 };
 pub use super::dnssec_validation::{
     canonical_dns_message, canonical_name, canonical_rdata, compute_dnskey,
-    compute_dnskey_canonical, compute_ds_digest, count_labels, create_ds_record, get_dnskey_record,
+    compute_dnskey_canonical, compute_ds_digest, create_ds_record, get_dnskey_record,
     get_ds_record, verify_ds_digest,
 };
 
@@ -52,6 +52,18 @@ pub struct Nsec3Config {
     pub iterations: u16,
     pub salt: Vec<u8>,
 }
+
+/// Largest NSEC3 salt the wire format can carry (one-octet length field,
+/// RFC 5155 §3.1.4).
+pub const NSEC3_MAX_SALT_LEN: usize = 255;
+
+/// Hard cap on NSEC3 iterations.
+///
+/// RFC 9276 §3.2 recommends 0: extra iterations multiply the work of every
+/// negative answer without adding meaningful resistance. The cap exists so an
+/// operator cannot turn a hostile iteration count into a query-time DoS; the
+/// RFC 5155 §B vectors use 12, which stays below it.
+pub const NSEC3_MAX_ITERATIONS: u16 = 100;
 
 impl Default for Nsec3Config {
     fn default() -> Self {
@@ -82,6 +94,36 @@ impl Nsec3Config {
             salt,
         }
     }
+
+    /// The parameters as they can actually be published.
+    ///
+    /// `None` when the salt cannot be encoded (more than 255 octets), because
+    /// a chain built from it would have an invalid RDATA length byte.
+    /// Iterations are clamped to [`NSEC3_MAX_ITERATIONS`], and the returned
+    /// value is what both the hash and the RDATA use — never one of each.
+    pub fn sanitized(&self) -> Option<Self> {
+        if self.salt.len() > NSEC3_MAX_SALT_LEN {
+            tracing::error!(
+                salt_len = self.salt.len(),
+                "NSEC3 salt exceeds 255 octets and cannot be encoded"
+            );
+            return None;
+        }
+        let iterations = self.iterations.min(NSEC3_MAX_ITERATIONS);
+        if iterations != self.iterations {
+            tracing::warn!(
+                configured = self.iterations,
+                used = iterations,
+                "NSEC3 iterations capped (RFC 9276 recommends 0)"
+            );
+        }
+        Some(Self {
+            algorithm: self.algorithm,
+            flags: self.flags,
+            iterations,
+            salt: self.salt.clone(),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -90,20 +132,22 @@ mod tests {
 
     #[test]
     fn test_canonical_name() {
-        let result = canonical_name("EXAMPLE.COM");
+        // Canonicalization requires a fully qualified name: `EXAMPLE.COM` is
+        // relative and must be rejected rather than guessed at (finding L3).
         assert_eq!(
-            result,
-            vec![7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0]
+            canonical_name("EXAMPLE.COM"),
+            Err(crate::wire::NameError::RelativeName {
+                name: "EXAMPLE.COM".to_string()
+            })
         );
 
-        let result2 = canonical_name("example.com.");
-        assert_eq!(
-            result2,
-            vec![7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0]
-        );
+        let expected = vec![7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0];
+        assert_eq!(canonical_name("EXAMPLE.COM.").unwrap(), expected);
+        assert_eq!(canonical_name("example.com.").unwrap(), expected);
 
-        let result3 = canonical_name("");
+        let result3 = canonical_name("").unwrap();
         assert_eq!(result3, vec![0]);
+        assert_eq!(canonical_name(".").unwrap(), vec![0]);
     }
 
     #[test]
@@ -139,11 +183,16 @@ mod tests {
     }
 
     #[test]
-    fn test_canonical_txt_record_multiple_strings() {
-        let result = canonical_rdata(16, "\x0bHello World", None, None, None, 3600);
-        assert_eq!(result.len(), 12);
-        assert_eq!(result[0], 11);
-        assert_eq!(&result[1..12], b"Hello World");
+    fn test_canonical_txt_record_does_not_guess_a_length_prefix() {
+        // The value is 12 presentation bytes whose first byte happens to be
+        // 0x0b. The old heuristic read that byte as a length prefix and
+        // signed a different 12-byte string than the wire form (finding L1);
+        // the canonical bytes are the wire encoding of the whole value.
+        let value = "\x0bHello World";
+        let result = canonical_rdata(16, value, None, None, None, 3600);
+        assert_eq!(result.len(), 13);
+        assert_eq!(result[0], 12);
+        assert_eq!(&result[1..], value.as_bytes());
     }
 
     #[test]
@@ -170,12 +219,20 @@ mod tests {
     }
 
     #[test]
-    fn test_count_labels() {
-        assert_eq!(count_labels("example.com"), 2);
-        assert_eq!(count_labels("example.com."), 2);
-        assert_eq!(count_labels("@"), 1);
-        assert_eq!(count_labels(""), 1);
-        assert_eq!(count_labels("a.b.c"), 3);
+    fn test_owner_labels() {
+        // `count_labels` was replaced by `OwnerName::labels`, which knows the
+        // origin and the wildcard rule (RFC 4034 §3.1.3).
+        assert_eq!(crate::wire::OwnerName::new("@", "example.com").labels(), 2);
+        assert_eq!(
+            crate::wire::OwnerName::new("www", "example.com").labels(),
+            3
+        );
+        assert_eq!(crate::wire::OwnerName::new("*", "example.com").labels(), 2);
+        assert_eq!(crate::wire::OwnerName::new("@", "").labels(), 0);
+        assert_eq!(
+            crate::wire::OwnerName::new("a.b", "example.com").labels(),
+            4
+        );
     }
 
     #[test]
@@ -255,6 +312,28 @@ mod tests {
         assert_eq!(config.flags, 0);
         assert_eq!(config.iterations, 0);
         assert!(config.salt.is_empty());
+    }
+
+    #[test]
+    fn test_nsec3_config_sanitized() {
+        // A salt larger than the one-octet length field can express is
+        // rejected, never truncated.
+        let oversized = Nsec3Config::new(0, vec![0u8; NSEC3_MAX_SALT_LEN + 1]);
+        assert!(oversized.sanitized().is_none());
+
+        // The RFC 5155 §B parameter set (12) survives untouched.
+        let rfc = Nsec3Config::new(12, vec![0xAA, 0xBB, 0xCC, 0xDD]);
+        assert_eq!(rfc.sanitized().unwrap().iterations, 12);
+
+        // An operator cannot make every negative answer cost unbounded work.
+        let hostile = Nsec3Config::new(u16::MAX, Vec::new());
+        assert_eq!(
+            hostile.sanitized().unwrap().iterations,
+            NSEC3_MAX_ITERATIONS
+        );
+
+        let max_salt = Nsec3Config::new(0, vec![0u8; NSEC3_MAX_SALT_LEN]);
+        assert!(max_salt.sanitized().is_some(), "255 octets is encodable");
     }
 
     #[test]

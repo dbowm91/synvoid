@@ -15,6 +15,11 @@ pub const MAX_TCP_QUERIES_PER_CONNECTION: usize = 1000;
 
 pub struct ConnectionLimits {
     max_tcp_connections: usize,
+    /// Cap on concurrent accepted connections per encrypted listener
+    /// (DoT, DoH, DoQ). Defaults to `max_tcp_connections` when built from the
+    /// pre-phase-03 constructor; `DnsServer::new` replaces it with the
+    /// configured `dns.limits.max_encrypted_connections`.
+    max_encrypted_connections: usize,
     max_concurrent_queries: usize,
     max_query_size: usize,
     max_response_size: usize,
@@ -42,6 +47,7 @@ impl ConnectionLimits {
     ) -> Self {
         let mut limits = Self {
             max_tcp_connections,
+            max_encrypted_connections: max_tcp_connections,
             max_concurrent_queries,
             max_query_size,
             max_response_size,
@@ -138,6 +144,21 @@ impl ConnectionLimits {
 
     pub fn max_query_size(&self) -> usize {
         self.max_query_size
+    }
+
+    /// Maximum concurrently accepted connections per encrypted listener.
+    pub fn max_encrypted_connections(&self) -> usize {
+        self.max_encrypted_connections
+    }
+
+    /// Override the encrypted-listener connection cap.
+    ///
+    /// A zero value is stored as-is: the encrypted accept loops then refuse
+    /// every connection rather than silently substituting a different cap.
+    /// `DnsLimitsConfig::validate` rejects zero at config load, so zero is
+    /// reachable only through a hand-built runtime value.
+    pub fn set_max_encrypted_connections(&mut self, max: usize) {
+        self.max_encrypted_connections = max;
     }
 
     fn maybe_reject(&self) -> Result<(), ConnectionLimitError> {
@@ -542,6 +563,18 @@ mod tests {
             limits.validate_response_size(2048),
             Err(ConnectionLimitError::ResponseTooLarge { .. })
         ));
+    }
+
+    /// Phase 03 (D33): the encrypted cap defaults to the plain-TCP cap and
+    /// can be overridden without touching any other limit.
+    #[test]
+    fn encrypted_connection_cap_defaults_to_tcp_and_is_overridable() {
+        let mut limits = ConnectionLimits::new(7, 10, 65535, 65535, 1000, 300, 30, false);
+        assert_eq!(limits.max_encrypted_connections(), 7);
+
+        limits.set_max_encrypted_connections(3);
+        assert_eq!(limits.max_encrypted_connections(), 3);
+        assert_eq!(limits.get_stats().max_connections, 7);
     }
 
     #[test]

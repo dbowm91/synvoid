@@ -454,6 +454,15 @@ required-features = ["dns"]
 name = "dns_zone_startup_activation"
 required-features = ["dns"]
 
+# Phase 08: `/health` realization matrix and `/config/dns` secret redaction.
+# Both halves are assembled in the root package (the admin router owns the
+# config endpoint; the DNS checker is a `synvoid-dns` value), so the suite
+# lives here. `required-features` makes a non-DNS run skip the target instead
+# of reporting an empty green binary.
+[[test]]
+name = "dns_truthfulness_contract"
+required-features = ["dns"]
+
 # Phase 39 (temporary): Oxc/bumpalo resolver unblock. `minify-html 0.18.1`
 # (crates.io) pins Oxc 0.95 -> `oxc_allocator 0.95 =bumpalo 3.19.0`, which
 # conflicts with modern Wasmtime (bumpalo ^3.20) required by current YARA-X.

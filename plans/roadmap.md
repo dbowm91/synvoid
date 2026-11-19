@@ -84,10 +84,11 @@ provides bounded streaming, chunked support, and explicit media caps.
 (end-to-end multi-node qualification and documentation truth) is in
 qualification, and the campaign is not closed until that evidence is recorded.
 
-## Mesh Trust Boundaries and Delivery Integrity — Proposed
+## Mesh Trust Boundaries and Delivery Integrity — In Progress
 
-Status: **PROPOSED** (audit complete 2026-11-14; no implementation started).
-Research baseline: `4add005f`.
+Status: **IN PROGRESS** (audit complete 2026-11-14; phases 01, 02, 03, 04a, 05, 06a,
+06b implemented and verified in `ea638ff9`; 04b, 04c, 06c, and 07 remain).
+Research baseline: `4add005f`; implementation baseline `ea638ff9`.
 
 Plan: `plans/mesh_trust_boundaries_roadmap.md`.
 Phase plans:
@@ -117,6 +118,48 @@ registry/stream lifecycle is repaired second, and identity, message
 authentication, delivery truthfulness, data-plane hardening, and config
 realization follow. It does not enable the DHT or multi-worker mesh; it makes
 their absence and their configuration honest.
+
+## DNS Serving Correctness and Trust Boundaries — Implemented
+
+Status: **IMPLEMENTED** (2026-11-19; all ten phases are in the working tree,
+based on `ea638ff9`). Gate evidence:
+`architecture/dns_serving_correctness_closeout.md`.
+Research baseline: `ea638ff9`.
+
+Plan: `plans/dns_serving_correctness_roadmap.md`.
+Audit: `plans/dns_capability_audit.md` (findings D1-D39).
+Phase plans:
+`plans/dns_serving_correctness_phase_01_wire_encoding_contract.md` through
+`plans/dns_serving_correctness_phase_10_verification_and_release_gate.md`.
+
+A read-only audit of the DNS capability at `ea638ff9` found that it is
+documented as production-ready while it does not produce valid responses in
+either serving mode:
+
+- authoritative answers below the apex are owned by a relative name (`www`
+  instead of `www.example.com`), proven by an in-process probe;
+- recursive answers encode names as presentation-format ASCII;
+- a 30-byte EDNS query that the production validator accepts panics the task
+  that owns the UDP listener, so one packet stops DNS for the process lifetime;
+- RRSIGs cover the relative owner, NSEC/NSEC3 proofs are synthesized per query,
+  and the NSEC3 hash is not applied at the default iteration count;
+- DoT, DoH, and DoQ bypass the validator, firewall, and rate limit, and DHT
+  domain registrations are applied as `authenticated: true` without a signature;
+- the control plane is config-gated but checks for a TSIG's presence rather
+  than verifying it, and its TSIG parser reads past the packet.
+
+The campaign sequences one owner encoder and one admission path before DNSSEC,
+recursive semantics, control-plane verification, mesh/config truth,
+authoritative completeness, and a release gate that runs an external validator.
+
+**Result:** one total owner encoder; one `admit` gate on all five transports;
+RRSIGs over canonical FQDNs with the KSK/ZSK split and a signed SOA in negative
+answers; NSEC/NSEC3 chains built once from a canonical owner index; resolver
+failures as SERVFAIL with stale only as a fallback; RFC 8945 TSIG, per-zone
+transfer ACLs, RFC 2136 updates, and cookie enforcement; mesh registrations
+gated on authenticity + publisher binding + authorization; `Arc<Zone>` lookup
+with wildcards, referrals, ENTs, and DNAME; and ten contract suites registered
+in `verify_steps()` with count guards.
 
 ## Documentation Corrective: Root README Public-Support Boundary — Ready
 

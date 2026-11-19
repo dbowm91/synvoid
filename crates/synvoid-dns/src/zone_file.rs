@@ -2,11 +2,15 @@ use std::collections::HashMap;
 
 use thiserror::Error;
 
-use crate::server::{RecordType, Zone, ZoneHealth};
+use crate::server::{RecordMap, RecordType, SerialPolicy, Zone};
 
 #[derive(Debug, Clone)]
 pub struct ZoneFileParser {
-    origin: String,
+    /// The zone identity. `$ORIGIN` never changes this.
+    zone_origin: String,
+    /// Parse-scoped origin for relative owner and RDATA names. `$ORIGIN`
+    /// changes this for subsequent lines only (R4).
+    current_origin: String,
     default_ttl: u32,
     soa_serial: u32,
     soa_refresh: u32,
@@ -15,6 +19,7 @@ pub struct ZoneFileParser {
     soa_minimum: u32,
     soa_mname: String,
     soa_rname: String,
+    soa_seen: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -38,8 +43,10 @@ pub enum ZoneParseError {
 
 impl ZoneFileParser {
     pub fn new(origin: String) -> Self {
+        let origin = origin.trim_end_matches('.').to_string();
         Self {
-            origin: origin.trim_end_matches('.').to_string(),
+            zone_origin: origin.clone(),
+            current_origin: origin,
             default_ttl: 3600,
             soa_serial: 1,
             soa_refresh: 3600,
@@ -48,6 +55,7 @@ impl ZoneFileParser {
             soa_minimum: 86400,
             soa_mname: String::new(),
             soa_rname: String::new(),
+            soa_seen: false,
         }
     }
 
@@ -57,13 +65,24 @@ impl ZoneFileParser {
     }
 
     pub fn parse_content(&mut self, content: &str) -> Result<Zone, ZoneParseError> {
-        let mut records: HashMap<(String, RecordType), Vec<crate::server::DnsZoneRecord>> =
-            HashMap::new();
-        let mut current_name = String::new();
+        // Parse-scoped state starts fresh for every document: a previous
+        // `$ORIGIN` must not leak into the next parse.
+        self.current_origin = self.zone_origin.clone();
+        self.soa_seen = false;
+
+        let mut records: RecordMap = HashMap::new();
+        // The last explicit owner, already resolved to an absolute name. Owner
+        // inheritance after `$ORIGIN` keeps pointing at the same name.
+        let mut current_name: Option<String> = None;
         let mut current_ttl = self.default_ttl;
 
-        for line in content.lines() {
-            let line = line.trim();
+        for raw_line in content.lines() {
+            // RFC 1035 §5.1: a line that begins with whitespace inherits the
+            // previous owner. Detect that *before* trimming; the old parser
+            // trimmed first and turned the inherited line into a record named
+            // after its type token.
+            let indented = raw_line.starts_with(|c: char| c.is_ascii_whitespace());
+            let line = raw_line.trim();
 
             if line.is_empty() || line.starts_with(';') {
                 continue;
@@ -75,14 +94,14 @@ impl ZoneFileParser {
             }
 
             if let Some(record) =
-                self.parse_record_line(line, &mut current_name, &mut current_ttl)?
+                self.parse_record_line(line, indented, &mut current_name, &mut current_ttl)?
             {
                 let key = (record.name.clone(), record.record_type);
                 records
                     .entry(key)
                     .or_default()
                     .push(crate::server::DnsZoneRecord {
-                        name: record.name.clone(),
+                        name: record.name,
                         record_type: record.record_type,
                         value: record.value,
                         ttl: record.ttl,
@@ -91,49 +110,48 @@ impl ZoneFileParser {
             }
         }
 
-        if self.soa_mname.is_empty() {
-            self.soa_mname = format!("ns1.{}", self.origin);
+        if !self.soa_seen {
+            self.soa_mname = if self.soa_mname.is_empty() {
+                format!("ns1.{}", self.zone_origin)
+            } else {
+                self.soa_mname.clone()
+            };
+            self.soa_rname = if self.soa_rname.is_empty() {
+                format!("admin.{}", self.zone_origin)
+            } else {
+                self.soa_rname.clone()
+            };
+
+            let soa_value = format!(
+                "{} {} {} {} {} {} {}",
+                self.soa_mname,
+                self.soa_rname,
+                self.soa_serial,
+                self.soa_refresh,
+                self.soa_retry,
+                self.soa_expire,
+                self.soa_minimum
+            );
+
+            records.insert(
+                ("@".to_string(), RecordType::SOA),
+                vec![crate::server::DnsZoneRecord {
+                    name: "@".to_string(),
+                    record_type: RecordType::SOA,
+                    value: soa_value,
+                    ttl: current_ttl,
+                    priority: None,
+                }],
+            );
         }
-        if self.soa_rname.is_empty() {
-            self.soa_rname = format!("admin.{}", self.origin);
-        }
 
-        let soa_value = format!(
-            "{} {} {} {} {} {} {}",
-            self.soa_mname,
-            self.soa_rname,
-            self.soa_serial,
-            self.soa_refresh,
-            self.soa_retry,
-            self.soa_expire,
-            self.soa_minimum
-        );
-
-        let soa_key = ("@".to_string(), RecordType::SOA);
-        records
-            .entry(soa_key)
-            .or_default()
-            .push(crate::server::DnsZoneRecord {
-                name: "@".to_string(),
-                record_type: RecordType::SOA,
-                value: soa_value,
-                ttl: current_ttl,
-                priority: None,
-            });
-
-        Ok(Zone {
-            origin: self.origin.clone(),
-            serial: self.soa_serial,
-            records,
-            dnskey_ttl: None,
-            ksk_key: None,
-            zsk_key: None,
-            nsec3_enabled: false,
-            nsec_enabled: true,
-            nsec3param: None,
-            history: Vec::new(),
-            health: ZoneHealth::default(),
-        })
+        let mut zone = Zone::new(self.zone_origin.clone());
+        // Single writer: relative keys, deduplicated RRsets, rebuilt owner
+        // index, and the zone serial adopted from the SOA.
+        zone.commit_records(records, SerialPolicy::AdoptSoa)
+            .map_err(ZoneParseError::InvalidRecord)?;
+        zone.nsec_enabled = true;
+        Ok(zone)
     }
 
     fn parse_directive(&mut self, directive: &str) -> Result<(), ZoneParseError> {
@@ -144,8 +162,20 @@ impl ZoneFileParser {
 
         match parts[0].to_uppercase().as_str() {
             "$ORIGIN" => {
-                if let Some(origin) = parts.get(1) {
-                    self.origin = origin.trim_end_matches('.').to_string();
+                // RFC 1035 §5.1: `$ORIGIN` changes the origin used for
+                // subsequent relative names. It is parse-scoped state, not a
+                // change to the zone's identity.
+                if let Some(raw) = parts.get(1) {
+                    let raw = raw.trim();
+                    let absolute = raw.ends_with('.');
+                    let name = raw.trim_end_matches('.').to_lowercase();
+                    self.current_origin = if absolute || name.is_empty() {
+                        name
+                    } else if name == "@" {
+                        self.current_origin.clone()
+                    } else {
+                        format!("{name}.{}", self.current_origin)
+                    };
                 }
             }
             "$TTL" => {
@@ -166,63 +196,59 @@ impl ZoneFileParser {
     fn parse_record_line(
         &mut self,
         line: &str,
-        current_name: &mut String,
+        indented: bool,
+        current_name: &mut Option<String>,
         current_ttl: &mut u32,
     ) -> Result<Option<ParsedRecord>, ZoneParseError> {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 3 {
+        if parts.is_empty() {
             return Ok(None);
         }
 
         let mut pos = 0;
-        let mut name = parts[pos].to_string();
+        let owner = if indented {
+            match current_name {
+                Some(name) => name.clone(),
+                None => {
+                    return Err(ZoneParseError::InvalidRecord(
+                        "line begins with whitespace but there is no previous owner".to_string(),
+                    ))
+                }
+            }
+        } else {
+            let name = self.resolve_name(parts[pos])?;
+            pos += 1;
+            *current_name = Some(name.clone());
+            name
+        };
 
-        if name
-            .chars()
-            .next()
-            .map(|c| c.is_ascii_digit())
-            .unwrap_or(false)
-        {
-            if let Ok(ttl) = name.parse::<u32>() {
+        // The class and TTL may appear in either order before the type.
+        while pos < parts.len() {
+            let token = parts[pos];
+            if token.eq_ignore_ascii_case("IN") {
+                pos += 1;
+                continue;
+            }
+            if !token.is_empty() && token.chars().all(|c| c.is_ascii_digit()) {
+                let ttl: u32 = token
+                    .parse()
+                    .map_err(|_| ZoneParseError::InvalidRecord(format!("Invalid TTL '{token}'")))?;
                 *current_ttl = ttl;
                 pos += 1;
-                if pos >= parts.len() {
-                    return Ok(None);
-                }
-                name = parts[pos].to_string();
+                continue;
             }
+            break;
         }
 
-        if name == "@" {
-            name = self.origin.clone();
-        } else if !name.contains('.') && name != "IN" {
-            if name != *current_name {
-                *current_name = name.clone();
-            }
-            name = format!("{}.{}", name, self.origin);
-        }
-
-        if name.ends_with('.') {
-            name.pop();
-        }
-
-        pos += 1;
-        if pos >= parts.len() {
+        let Some(type_token) = parts.get(pos) else {
             return Ok(None);
-        }
-
-        if parts[pos] == "IN" {
-            pos += 1;
-        }
-        if pos >= parts.len() {
-            return Ok(None);
-        }
-
-        let record_type_str = parts[pos].to_uppercase();
+        };
+        let record_type_str = type_token.to_uppercase();
         let record_type = match record_type_str.as_str() {
             "A" => RecordType::A,
             "AAAA" => RecordType::AAAA,
             "CNAME" => RecordType::CNAME,
+            "DNAME" => RecordType::DNAME,
             "MX" => RecordType::MX,
             "TXT" => RecordType::TXT,
             "NS" => RecordType::NS,
@@ -241,23 +267,36 @@ impl ZoneFileParser {
             "NSEC" => RecordType::NSEC,
             "NSEC3" => RecordType::NSEC3,
             "NSEC3PARAM" => RecordType::NSEC3PARAM,
-            _ => return Ok(None),
+            _ => {
+                // R4: an unsupported type is rejected, never silently dropped
+                // and never parsed as a one-token RDATA.
+                return Err(ZoneParseError::InvalidRecord(format!(
+                    "unsupported record type '{record_type_str}' at '{owner}'"
+                )));
+            }
         };
-
         pos += 1;
-        if pos >= parts.len() {
-            return Ok(None);
+
+        let rdata = &parts[pos..];
+        if rdata.is_empty() {
+            return Err(ZoneParseError::InvalidRecord(format!(
+                "{record_type_str} record at '{owner}' has no RDATA"
+            )));
         }
+
+        let name = Zone::normalize_record_name(&self.zone_origin, &owner)
+            .map_err(ZoneParseError::InvalidRecord)?;
 
         if record_type == RecordType::SOA {
-            return self.parse_soa_record(&parts[pos..], name, *current_ttl);
+            self.soa_seen = true;
+            return self.parse_soa_record(rdata, name, *current_ttl);
         }
 
-        let priority = if record_type == RecordType::MX || record_type == RecordType::SRV {
-            let prio: u32 = parts[pos].parse().map_err(|e: std::num::ParseIntError| {
+        let (priority, value) = if matches!(record_type, RecordType::MX | RecordType::SRV) {
+            let prio: u32 = rdata[0].parse().map_err(|e: std::num::ParseIntError| {
                 ZoneParseError::InvalidRecord(format!(
                     "Invalid {} priority '{}': {}",
-                    record_type_str, parts[pos], e
+                    record_type_str, rdata[0], e
                 ))
             })?;
             if prio > u16::MAX as u32 {
@@ -266,16 +305,14 @@ impl ZoneFileParser {
                     record_type_str, prio
                 )));
             }
-            pos += 1;
-            Some(prio)
+            if rdata.len() < 2 {
+                return Err(ZoneParseError::InvalidRecord(format!(
+                    "{record_type_str} record at '{owner}' is missing its target"
+                )));
+            }
+            (Some(prio), join_rdata(record_type, &rdata[1..]))
         } else {
-            None
-        };
-
-        let value = if matches!(record_type, RecordType::TXT | RecordType::CAA) {
-            parts[pos..].join(" ")
-        } else {
-            parts[pos].to_string()
+            (None, join_rdata(record_type, rdata))
         };
 
         Ok(Some(ParsedRecord {
@@ -285,6 +322,26 @@ impl ZoneFileParser {
             value,
             priority,
         }))
+    }
+
+    /// Resolve an owner token against the parse-scoped origin.
+    ///
+    /// A trailing dot is absolute; anything else — including a multi-label
+    /// name like `a.b` — is relative to the current `$ORIGIN` (RFC 1035
+    /// §5.1). The old parser treated any name with a dot as absolute, which
+    /// stored `a.b` at the DNS root of the zone file instead of under it.
+    fn resolve_name(&self, token: &str) -> Result<String, ZoneParseError> {
+        let token = token.trim();
+        if token == "@" {
+            return Ok(self.current_origin.clone());
+        }
+        if let Some(absolute) = token.strip_suffix('.') {
+            return Ok(absolute.to_lowercase());
+        }
+        if self.current_origin.is_empty() {
+            return Ok(token.to_lowercase());
+        }
+        Ok(format!("{}.{}", token.to_lowercase(), self.current_origin))
     }
 
     fn parse_soa_record(
@@ -300,16 +357,10 @@ impl ZoneFileParser {
             ));
         }
 
-        let mut mname = parts[0].trim_end_matches('.').to_string();
-        if !mname.contains('.') {
-            mname = format!("{}.{}", mname, self.origin);
-        }
+        let mname = self.absolute_from_current(parts[0]);
         self.soa_mname = mname.clone();
 
-        let mut rname = parts[1].trim_end_matches('.').to_string();
-        if !rname.contains('.') {
-            rname = format!("{}.{}", rname, self.origin);
-        }
+        let rname = self.absolute_from_current(parts[1]);
         self.soa_rname = rname.clone();
 
         self.soa_serial = parts[2].parse().map_err(|e: std::num::ParseIntError| {
@@ -362,6 +413,38 @@ impl ZoneFileParser {
             priority: None,
         }))
     }
+
+    /// Treat a zone-file name as absolute unless it carries a trailing dot
+    /// (RFC 1035 §5.1), resolving relatives against the current origin.
+    fn absolute_from_current(&self, token: &str) -> String {
+        let token = token.trim();
+        if let Some(absolute) = token.strip_suffix('.') {
+            return absolute.to_lowercase();
+        }
+        if self.current_origin.is_empty() {
+            token.to_lowercase()
+        } else {
+            format!("{}.{}", token.to_lowercase(), self.current_origin)
+        }
+    }
+}
+
+/// Join every RDATA token instead of truncating to the first one.
+///
+/// Hex-encoded internal RDATA (`DNSKEY`, `RRSIG`, `NSEC`, `NSEC3`,
+/// `NSEC3PARAM`, `DS`) may be split across tokens, so it is concatenated;
+/// presentation-format RDATA (`NAPTR`, `TXT`, `CAA`, `SVCB`, ...) keeps its
+/// separating spaces so the one RDATA encoder can parse it.
+fn join_rdata(record_type: RecordType, tokens: &[&str]) -> String {
+    match record_type {
+        RecordType::DNSKEY
+        | RecordType::RRSIG
+        | RecordType::NSEC
+        | RecordType::NSEC3
+        | RecordType::NSEC3PARAM
+        | RecordType::DS => tokens.concat(),
+        _ => tokens.join(" "),
+    }
 }
 
 pub fn parse_zone_file(path: &str, origin: &str) -> Result<Zone, ZoneParseError> {
@@ -395,12 +478,22 @@ mail    IN      A       192.0.2.3
         assert_eq!(zone.origin, "example.com");
         assert_eq!(zone.serial, 2024030901);
 
-        // The zone parser stores "@" as the origin name
-        let soa_key = ("example.com".to_string(), RecordType::SOA);
-        assert!(zone.records.contains_key(&soa_key));
-
-        let a_key = ("example.com".to_string(), RecordType::A);
-        assert!(zone.records.contains_key(&a_key));
+        // R4: owners are stored in the origin-relative spelling the query path
+        // looks up, and the file's SOA is the only SOA — the parser must not
+        // add a second, synthesized apex SOA.
+        let soa_key = ("@".to_string(), RecordType::SOA);
+        assert_eq!(
+            zone.records.get(&soa_key).map(|r| r.len()),
+            Some(1),
+            "exactly one apex SOA"
+        );
+        assert!(zone.records.contains_key(&("@".to_string(), RecordType::A)));
+        assert!(zone
+            .records
+            .contains_key(&("www".to_string(), RecordType::A)));
+        assert!(zone
+            .records
+            .contains_key(&("mail".to_string(), RecordType::A)));
     }
 
     #[test]

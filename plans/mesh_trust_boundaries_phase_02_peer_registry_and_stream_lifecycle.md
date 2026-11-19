@@ -1,6 +1,6 @@
 # Phase 02 Plan: Peer Registry and Stream Lifecycle
 
-Status: **PROPOSED** (not started; findings verified at `4add005f`).
+Status: **IMPLEMENTED** (2026-11-14; mesh suite green in `ea638ff9`).
 
 Registered in: `plans/roadmap.md`.
 Campaign: `plans/mesh_trust_boundaries_roadmap.md`.

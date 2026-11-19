@@ -1,7 +1,5 @@
 use std::net::IpAddr;
 
-use super::server::RecordType;
-
 /// Pre-parse validation gate with configurable limits.
 ///
 /// This module intentionally walks raw wire bytes independently of the
@@ -27,6 +25,15 @@ pub struct DnsQueryValidator {
     max_records: usize,
     max_record_size: usize,
     max_ttl: u32,
+}
+
+/// The question fields a structural validation recovered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ValidatedQuestion {
+    pub qtype: u16,
+    pub qclass: u16,
+    /// Byte offset just past QTYPE/QCLASS: where the answer section starts.
+    pub question_end: usize,
 }
 
 impl DnsQueryValidator {
@@ -62,7 +69,19 @@ impl DnsQueryValidator {
         }
     }
 
-    pub fn validate_query(&self, query: &[u8]) -> Result<(), String> {
+    /// Validate the request envelope without deciding opcode or QR policy.
+    ///
+    /// This is the structural half of admission: size, header length, exactly
+    /// one question, the label/name bounds, a complete QTYPE/QCLASS, a
+    /// non-reserved QTYPE, and the framing of every record the header counts.
+    /// The caller owns the ordered policy decisions (QR=1, opcode, QDCOUNT,
+    /// QCLASS, EDNS, firewall, rate limit) so every transport applies the same
+    /// sequence.
+    ///
+    /// All reads are bounds-checked; a packet whose declared sections do not
+    /// fit is rejected here instead of reaching a parser that would have to
+    /// guess where a record ends.
+    pub fn validate_request_structure(&self, query: &[u8]) -> Result<ValidatedQuestion, String> {
         if query.len() > self.max_query_size {
             return Err(format!(
                 "Query size {} exceeds maximum {}",
@@ -73,19 +92,6 @@ impl DnsQueryValidator {
 
         if query.len() < 12 {
             return Err("Query too small".to_string());
-        }
-
-        let flags = match super::wire::get_message_flags(query) {
-            Some(f) => f,
-            None => return Err("Invalid DNS header".to_string()),
-        };
-
-        if !flags.is_standard_query() {
-            return Err("Not a standard query".to_string());
-        }
-
-        if flags.is_response {
-            return Err("Not a query message".to_string());
         }
 
         let qdcount = u16::from_be_bytes([query[4], query[5]]);
@@ -147,73 +153,85 @@ impl DnsQueryValidator {
         let qtype = u16::from_be_bytes([query[pos], query[pos + 1]]);
         let qclass = u16::from_be_bytes([query[pos + 2], query[pos + 3]]);
 
-        if qclass != 1 {
-            return Err("Unsupported query class".to_string());
-        }
-
         if qtype == 0 {
             return Err("Invalid query type 0".to_string());
         }
 
-        let end_of_question = pos + 4;
-
-        if end_of_question < query.len() {
-            Self::validate_edns_options(query, end_of_question)?;
+        if !crate::parsed_query::declared_records_well_formed(query) {
+            return Err("Record section does not fit the query".to_string());
         }
+
+        Ok(ValidatedQuestion {
+            qtype,
+            qclass,
+            question_end: pos + 4,
+        })
+    }
+
+    pub fn validate_query(&self, query: &[u8]) -> Result<(), String> {
+        if query.len() > self.max_query_size {
+            return Err(format!(
+                "Query size {} exceeds maximum {}",
+                query.len(),
+                self.max_query_size
+            ));
+        }
+
+        if query.len() < 12 {
+            return Err("Query too small".to_string());
+        }
+
+        let flags = match super::wire::get_message_flags(query) {
+            Some(f) => f,
+            None => return Err("Invalid DNS header".to_string()),
+        };
+
+        if !flags.is_standard_query() {
+            return Err("Not a standard query".to_string());
+        }
+
+        if flags.is_response {
+            return Err("Not a query message".to_string());
+        }
+
+        let question = self.validate_request_structure(query)?;
+
+        if question.qclass != 1 {
+            return Err("Unsupported query class".to_string());
+        }
+
+        self.validate_edns_envelope(query, question.question_end)?;
 
         Ok(())
     }
 
-    fn validate_edns_options(query: &[u8], pos: usize) -> Result<(), String> {
-        if pos + 11 > query.len() {
+    /// Reject an EDNS envelope the authoritative path cannot answer normally.
+    ///
+    /// The option *bodies* are the canonical parser's job; this checks only
+    /// the version the caller asked for, using the same additional-section
+    /// walk as production. An unsupported version is reported here so the
+    /// standalone validator and the listener agree.
+    fn validate_edns_envelope(&self, query: &[u8], question_end: usize) -> Result<(), String> {
+        let arcount = u16::from_be_bytes([query[10], query[11]]);
+        if arcount == 0 {
             return Ok(());
         }
-
-        let udp_payload_size = u16::from_be_bytes([query[pos], query[pos + 1]]);
-        if udp_payload_size != 0 && udp_payload_size < 512 {
-            return Err(format!(
-                "Invalid EDNS UDP payload size: {}",
-                udp_payload_size
-            ));
+        let ancount = u16::from_be_bytes([query[6], query[7]]);
+        let nscount = u16::from_be_bytes([query[8], query[9]]);
+        let Some(additional_start) =
+            super::edns::additional_section_start(query, question_end, ancount, nscount)
+        else {
+            return Ok(());
+        };
+        let state = super::edns::parse_query_edns(query, additional_start, arcount);
+        if state.is_malformed() {
+            return Err("Malformed EDNS options".to_string());
         }
-
-        let _extended_rcode = query[pos + 2];
-        let version = query[pos + 3];
-
-        if version > 0 {
-            return Err(format!("Unsupported EDNS version: {}", version));
-        }
-
-        let _z = u16::from_be_bytes([query[pos + 4], query[pos + 5]]);
-
-        let rdlen = u16::from_be_bytes([query[pos + 10], query[pos + 11]]);
-
-        if rdlen > 0 {
-            let rdata_start = pos + 12;
-            if rdata_start + rdlen as usize > query.len() {
-                return Err("Incomplete EDNS options".to_string());
-            }
-
-            let mut opt_pos = rdata_start;
-            let opt_end = rdata_start + rdlen as usize;
-
-            while opt_pos + 4 < opt_end {
-                let opt_code = u16::from_be_bytes([query[opt_pos], query[opt_pos + 1]]);
-                let opt_len = u16::from_be_bytes([query[opt_pos + 2], query[opt_pos + 3]]);
-
-                if opt_code == 0 && opt_len == 0 {
-                    opt_pos += 4;
-                    continue;
-                }
-
-                if opt_pos + 4 + opt_len as usize > query.len() {
-                    return Err("Incomplete EDNS option data".to_string());
-                }
-
-                opt_pos += 4 + opt_len as usize;
+        if let Some(edns) = state.options {
+            if edns.version > super::edns::EDNS_VERSION {
+                return Err(format!("Unsupported EDNS version: {}", edns.version));
             }
         }
-
         Ok(())
     }
 
@@ -363,109 +381,78 @@ impl DnsQueryValidator {
         Ok(())
     }
 
+    /// Validate a request and, on rejection, produce the response a listener
+    /// should send (or `Err(None)` when no response is legal).
+    ///
+    /// This mirrors the admission order for the checks it can make without a
+    /// request context: size, header, `QR=1` (**no response**), opcode,
+    /// QDCOUNT, question structure, and QCLASS. EDNS version handling,
+    /// firewall, and rate limiting need context and live in
+    /// [`crate::server::admission::admit`]; a listener gets those by calling
+    /// `admit`, not by calling this.
     pub fn validate_query_with_response(&self, query: &[u8]) -> Result<(), Option<Vec<u8>>> {
         if query.len() > self.max_query_size {
-            let resp = super::wire::build_error_response(query, super::wire::RCODE_REFUSED);
-            return Err(resp);
+            return Err(super::wire::build_error_response(
+                query,
+                super::wire::RCODE_REFUSED,
+            ));
         }
 
         if query.len() < 12 {
-            let resp = super::wire::build_error_response(query, super::wire::RCODE_REFUSED);
-            return Err(resp);
+            // No header, so no response is possible.
+            return Err(None);
         }
 
         let flags = match super::wire::get_message_flags(query) {
             Some(f) => f,
             None => {
-                let resp = super::wire::build_error_response(query, super::wire::RCODE_REFUSED);
-                return Err(resp);
+                return Err(super::wire::build_error_response(
+                    query,
+                    super::wire::RCODE_REFUSED,
+                ))
             }
         };
 
-        if !flags.is_standard_query() {
-            let resp = super::wire::build_error_response(query, super::wire::RCODE_NOTIMP);
-            return Err(resp);
+        // D14: a response must never be answered. The only safe action is to
+        // drop it, so two servers cannot answer each other's responses.
+        if flags.is_response {
+            return Err(None);
         }
 
-        if flags.is_response {
-            let resp = super::wire::build_error_response(query, super::wire::RCODE_REFUSED);
-            return Err(resp);
+        // QUERY, NOTIFY, and UPDATE are served; every other opcode is NOTIMP.
+        if !matches!(
+            flags.opcode,
+            super::wire::OPCODE_QUERY | super::wire::OPCODE_NOTIFY | super::wire::OPCODE_UPDATE
+        ) {
+            return Err(super::wire::build_error_response(
+                query,
+                super::wire::RCODE_NOTIMP,
+            ));
         }
 
         let qdcount = u16::from_be_bytes([query[4], query[5]]);
-
-        if qdcount == 0 {
-            let resp = super::wire::build_error_response(query, super::wire::RCODE_REFUSED);
-            return Err(resp);
-        }
-
         if qdcount > 1 {
-            let resp = super::wire::build_error_response(query, super::wire::RCODE_NOTIMP);
-            return Err(resp);
+            return Err(super::wire::build_error_response(
+                query,
+                super::wire::RCODE_NOTIMP,
+            ));
         }
 
-        let mut pos = 12;
-        let mut labels_count = 0;
-        let mut name_length = 0;
-
-        while pos < query.len() {
-            let len = query[pos] as usize;
-            if len == 0 {
-                pos += 1;
-                break;
+        let question = match self.validate_request_structure(query) {
+            Ok(question) => question,
+            Err(_) => {
+                return Err(super::wire::build_error_response(
+                    query,
+                    super::wire::RCODE_FORMERR,
+                ))
             }
+        };
 
-            if len > self.max_label_length {
-                let resp = super::wire::build_error_response(query, super::wire::RCODE_REFUSED);
-                return Err(resp);
-            }
-
-            if pos + 1 + len > query.len() {
-                let resp = super::wire::build_error_response(query, super::wire::RCODE_REFUSED);
-                return Err(resp);
-            }
-
-            labels_count += 1;
-            name_length += 1 + len;
-
-            if labels_count > self.max_labels {
-                let resp = super::wire::build_error_response(query, super::wire::RCODE_REFUSED);
-                return Err(resp);
-            }
-
-            if name_length > self.max_name_length {
-                let resp = super::wire::build_error_response(query, super::wire::RCODE_REFUSED);
-                return Err(resp);
-            }
-
-            pos += 1 + len;
-        }
-
-        if pos + 4 > query.len() {
-            let resp = super::wire::build_error_response(query, super::wire::RCODE_REFUSED);
-            return Err(resp);
-        }
-
-        let qtype = u16::from_be_bytes([query[pos], query[pos + 1]]);
-        let qclass = u16::from_be_bytes([query[pos + 2], query[pos + 3]]);
-
-        if qclass != 1 {
-            let resp = super::wire::build_error_response(query, super::wire::RCODE_NOTIMP);
-            return Err(resp);
-        }
-
-        let qtype_record = RecordType::from(qtype);
-        if qtype == 255 || qtype == 252 {
-            return Ok(());
-        }
-
-        // Allow unknown query types for forward compatibility
-        // RFC 1035 Section 3.2.2: TYPE values are an unsigned 16-bit integer
-        // New types can be defined over time, so we should not reject unknown ones
-        let unknown_type = RecordType::NULL;
-        if qtype_record == unknown_type && qtype != 0 {
-            // Only reject type 0 which is reserved
-            return Ok(());
+        if question.qclass != 1 {
+            return Err(super::wire::build_error_response(
+                query,
+                super::wire::RCODE_NOTIMP,
+            ));
         }
 
         Ok(())

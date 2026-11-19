@@ -10,6 +10,15 @@ pub struct DnsLimitsConfig {
     #[serde(default = "default_max_tcp_connections")]
     pub max_tcp_connections: usize,
 
+    /// Concurrent accepted connections per encrypted listener (DoT/DoH/DoQ).
+    ///
+    /// Serde cannot default one field from another, so the documented default
+    /// is the same number as [`Self::max_tcp_connections`]'s default (500);
+    /// a deployment that lowers `max_tcp_connections` should set this
+    /// explicitly.
+    #[serde(default = "default_max_encrypted_connections")]
+    pub max_encrypted_connections: usize,
+
     #[serde(default = "default_max_concurrent_queries")]
     pub max_concurrent_queries: usize,
 
@@ -37,6 +46,10 @@ pub struct DnsLimitsConfig {
 
 fn default_max_tcp_connections() -> usize {
     500
+}
+
+fn default_max_encrypted_connections() -> usize {
+    default_max_tcp_connections()
 }
 
 fn default_max_concurrent_queries() -> usize {
@@ -71,6 +84,7 @@ impl Default for DnsLimitsConfig {
     fn default() -> Self {
         Self {
             max_tcp_connections: default_max_tcp_connections(),
+            max_encrypted_connections: default_max_encrypted_connections(),
             max_concurrent_queries: default_max_concurrent_queries(),
             max_query_size: default_max_query_size(),
             max_response_size: default_max_response_size(),
@@ -104,6 +118,9 @@ impl DnsLimitsConfig {
         }
         if self.max_tcp_connections == 0 {
             return Err("max_tcp_connections cannot be zero".to_string());
+        }
+        if self.max_encrypted_connections == 0 {
+            return Err("max_encrypted_connections cannot be zero".to_string());
         }
         if self.max_concurrent_queries == 0 {
             return Err("max_concurrent_queries cannot be zero".to_string());
@@ -265,6 +282,33 @@ mod tests {
         assert!(limits.validate().is_err());
         let err = limits.validate().unwrap_err();
         assert!(err.contains("cannot be zero"));
+    }
+
+    /// Phase 03 (D33): the encrypted listeners gained a connection cap. A
+    /// zero cap would refuse every DoT/DoH/DoQ connection, so it is rejected
+    /// at config load exactly like `max_tcp_connections == 0`.
+    #[test]
+    fn limits_validate_max_encrypted_connections_zero() {
+        let limits = DnsLimitsConfig {
+            max_encrypted_connections: 0,
+            ..Default::default()
+        };
+        assert!(limits.validate().is_err());
+        let err = limits.validate().unwrap_err();
+        assert!(err.contains("max_encrypted_connections cannot be zero"));
+    }
+
+    /// The persisted default matches the default `max_tcp_connections`.
+    /// Serde cannot express "default to another field", so the number is
+    /// duplicated in a named default function and this test pins them
+    /// together.
+    #[test]
+    fn limits_default_encrypted_cap_matches_default_tcp_cap() {
+        let limits = DnsLimitsConfig::default();
+        assert_eq!(
+            limits.max_encrypted_connections, limits.max_tcp_connections,
+            "both defaults must stay aligned"
+        );
     }
 
     #[test]

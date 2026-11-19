@@ -30,6 +30,7 @@ impl MeshDnsRegistry {
             verification_failure_tx: None,
             verification_metrics: VerificationMetrics::new(),
             geoip: None,
+            untrusted_registrations: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -84,6 +85,15 @@ impl MeshDnsRegistry {
 
     pub fn node_id(&self) -> &str {
         &self.node_id
+    }
+
+    /// The DHT domain registrations this boundary refused, newest last.
+    ///
+    /// R2 default-deny keeps an unauthorized registration out of the served
+    /// maps, but an operator still needs to see that the mesh advertised it and
+    /// why it was dropped.
+    pub fn untrusted_domain_registrations(&self) -> Vec<UntrustedDomainRegistration> {
+        self.untrusted_registrations.read().clone()
     }
 
     pub fn is_global(&self) -> bool {

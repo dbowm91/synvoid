@@ -4,39 +4,34 @@ use async_trait::async_trait;
 
 use super::resolver::{
     CNameRecord, DnsResolver, HickoryResolver, MxRecord, NsRecord, PtrRecord, ResolverError,
-    ResolverResult, SoaRecord, SrvRecord, TxtRecord,
+    ResolverResult, SoaRecord, SrvRecord, TxtRecord, UpstreamRrset,
 };
 
+/// Forwarder that sends queries to mesh-provided global nodes.
+///
+/// There is no fallback resolver: an operator who wants the host resolver
+/// configuration selects `upstream_provider = System` explicitly, so a mesh
+/// upstream that fails stays a visible failure instead of silently becoming a
+/// query to an unrelated server.
 pub struct GlobalNodeResolver {
-    primary: Option<HickoryResolver>,
-    fallback: HickoryResolver,
+    primary: HickoryResolver,
     global_node_ips: Vec<IpAddr>,
 }
 
 impl GlobalNodeResolver {
     pub fn new(global_node_ips: Vec<IpAddr>) -> Result<Self, ResolverError> {
-        let fallback = HickoryResolver::from_system_config()?;
+        if global_node_ips.is_empty() {
+            return Err(ResolverError::QueryFailed(
+                "no global node upstreams are configured; refusing to fall back to the system \
+                 resolver (select upstream_provider = System for that)"
+                    .to_string(),
+            ));
+        }
 
-        let primary = if !global_node_ips.is_empty() {
-            match HickoryResolver::with_upstream_servers(&global_node_ips, 5) {
-                Ok(r) => Some(r),
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to create global node resolver with {} nodes: {}, using fallback only",
-                        global_node_ips.len(),
-                        e
-                    );
-                    None
-                }
-            }
-        } else {
-            tracing::info!("No global nodes available, using system DNS fallback");
-            None
-        };
+        let primary = HickoryResolver::with_upstream_servers(&global_node_ips, 5)?;
 
         Ok(Self {
             primary,
-            fallback,
             global_node_ips,
         })
     }
@@ -44,17 +39,12 @@ impl GlobalNodeResolver {
     pub fn global_node_count(&self) -> usize {
         self.global_node_ips.len()
     }
-
-    fn resolver(&self) -> &HickoryResolver {
-        self.primary.as_ref().unwrap_or(&self.fallback)
-    }
 }
 
 impl Clone for GlobalNodeResolver {
     fn clone(&self) -> Self {
         Self {
             primary: self.primary.clone(),
-            fallback: self.fallback.clone(),
             global_node_ips: self.global_node_ips.clone(),
         }
     }
@@ -63,75 +53,43 @@ impl Clone for GlobalNodeResolver {
 #[async_trait]
 impl DnsResolver for GlobalNodeResolver {
     async fn lookup_txt(&self, name: &str) -> ResolverResult<TxtRecord> {
-        match self.resolver().lookup_txt(name).await {
-            Ok(r) => Ok(r),
-            Err(_) if self.primary.is_some() => self.fallback.lookup_txt(name).await,
-            Err(e) => Err(e),
-        }
+        self.primary.lookup_txt(name).await
     }
 
     async fn lookup_ns(&self, name: &str) -> ResolverResult<NsRecord> {
-        match self.resolver().lookup_ns(name).await {
-            Ok(r) => Ok(r),
-            Err(_) if self.primary.is_some() => self.fallback.lookup_ns(name).await,
-            Err(e) => Err(e),
-        }
+        self.primary.lookup_ns(name).await
     }
 
     async fn lookup_a(&self, name: &str) -> ResolverResult<Vec<IpAddr>> {
-        match self.resolver().lookup_a(name).await {
-            Ok(r) => Ok(r),
-            Err(_) if self.primary.is_some() => self.fallback.lookup_a(name).await,
-            Err(e) => Err(e),
-        }
+        self.primary.lookup_a(name).await
     }
 
     async fn lookup_ip_with_ttl(&self, name: &str) -> ResolverResult<super::resolver::IpRecord> {
-        match self.resolver().lookup_ip_with_ttl(name).await {
-            Ok(r) => Ok(r),
-            Err(_) if self.primary.is_some() => self.fallback.lookup_ip_with_ttl(name).await,
-            Err(e) => Err(e),
-        }
+        self.primary.lookup_ip_with_ttl(name).await
     }
 
     async fn lookup_mx(&self, name: &str) -> ResolverResult<Vec<MxRecord>> {
-        match self.resolver().lookup_mx(name).await {
-            Ok(r) => Ok(r),
-            Err(_) if self.primary.is_some() => self.fallback.lookup_mx(name).await,
-            Err(e) => Err(e),
-        }
+        self.primary.lookup_mx(name).await
     }
 
     async fn lookup_soa(&self, name: &str) -> ResolverResult<Option<SoaRecord>> {
-        match self.resolver().lookup_soa(name).await {
-            Ok(r) => Ok(r),
-            Err(_) if self.primary.is_some() => self.fallback.lookup_soa(name).await,
-            Err(e) => Err(e),
-        }
+        self.primary.lookup_soa(name).await
     }
 
     async fn lookup_ptr(&self, name: &str) -> ResolverResult<Option<PtrRecord>> {
-        match self.resolver().lookup_ptr(name).await {
-            Ok(r) => Ok(r),
-            Err(_) if self.primary.is_some() => self.fallback.lookup_ptr(name).await,
-            Err(e) => Err(e),
-        }
+        self.primary.lookup_ptr(name).await
     }
 
     async fn lookup_srv(&self, name: &str) -> ResolverResult<Vec<SrvRecord>> {
-        match self.resolver().lookup_srv(name).await {
-            Ok(r) => Ok(r),
-            Err(_) if self.primary.is_some() => self.fallback.lookup_srv(name).await,
-            Err(e) => Err(e),
-        }
+        self.primary.lookup_srv(name).await
     }
 
     async fn lookup_cname(&self, name: &str) -> ResolverResult<Option<CNameRecord>> {
-        match self.resolver().lookup_cname(name).await {
-            Ok(r) => Ok(r),
-            Err(_) if self.primary.is_some() => self.fallback.lookup_cname(name).await,
-            Err(e) => Err(e),
-        }
+        self.primary.lookup_cname(name).await
+    }
+
+    async fn lookup_rrset(&self, name: &str, record_type: u16) -> ResolverResult<UpstreamRrset> {
+        self.primary.lookup_rrset(name, record_type).await
     }
 }
 
@@ -141,9 +99,15 @@ mod tests {
 
     #[test]
     fn test_global_node_resolver_no_nodes() {
-        let resolver = GlobalNodeResolver::new(vec![]).unwrap();
-        assert_eq!(resolver.global_node_count(), 0);
-        assert!(resolver.primary.is_none());
+        // An empty node list is an error, not a silent system fallback.
+        let error = match GlobalNodeResolver::new(vec![]) {
+            Ok(_) => panic!("empty upstream list must fail"),
+            Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains("no global node upstreams"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]
@@ -151,7 +115,6 @@ mod tests {
         let ips: Vec<IpAddr> = vec!["10.0.0.1".parse().unwrap(), "10.0.0.2".parse().unwrap()];
         let resolver = GlobalNodeResolver::new(ips).unwrap();
         assert_eq!(resolver.global_node_count(), 2);
-        assert!(resolver.primary.is_some());
     }
 
     #[test]

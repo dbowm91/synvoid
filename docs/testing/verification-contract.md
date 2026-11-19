@@ -533,8 +533,8 @@ cargo deny check
 These tests have extended timeouts and are not included in routine verification. Run them directly:
 
 ```bash
-# DNS stress tests (120s timeout per test)
-cargo test -p synvoid-dns --test dns_stress --profile ci
+# DNS stress/resource-limit tests
+cargo test -p synvoid-dns --test dns_stress_resource_limits --profile ci
 
 # DNS interop tests
 cargo test -p synvoid-dns --test dns_interop_authoritative --profile ci
@@ -542,13 +542,25 @@ cargo test -p synvoid-dns --test dns_interop_truncation --profile ci
 cargo test -p synvoid-dns --test dns_interop_dnssec --profile ci
 cargo test -p synvoid-dns --test dns_interop_transfers --profile ci
 cargo test -p synvoid-dns --test dns_interop_update_notify --profile ci
-cargo test -p synvoid-dns --test dns_interop_encrypted --profile ci
 cargo test -p synvoid-dns --test dns_interop_recursive --profile ci
+
+# DNS serving-correctness contract suites (also in `cargo xtask verify`)
+cargo test -p synvoid-dns --test dns_wire_contract --profile ci
+cargo test -p synvoid-dns --test dns_envelope_contract --profile ci
+cargo test -p synvoid-dns --test dns_admission_contract --profile ci
+cargo test -p synvoid-dns --test dnssec_signature_contract --profile ci
+cargo test -p synvoid-dns --test dnssec_denial_contract --profile ci
+cargo test -p synvoid-dns --test dns_recursive_contract --profile ci
+cargo test -p synvoid-dns --test dns_control_plane_contract --profile ci
+cargo test -p synvoid-dns --test dns_authoritative_lookup --profile ci
+cargo test -p synvoid-dns --test dns_external_interop --profile ci
+cargo test -p synvoid-dns --features mesh --test dns_mesh_trust_contract --profile ci
+cargo test -p synvoid --features dns --test dns_truthfulness_contract --profile ci
 
 # DNS live signing tests
 cargo test -p synvoid-dns --test dnssec_live_signing --profile ci
 
-# DNS conformance suite
+# DNS conformance suite (internal lanes + optional external tools)
 ./scripts/dns/conformance.sh
 
 # Worker supervision (contains 100s sleep task body)

@@ -34,12 +34,8 @@ use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::time::{interval, Duration};
 
-use hickory_proto::dnssec::PublicKey;
 use hickory_proto::rr::{RData, RecordType};
-
-use crate::trust_anchor::{Rfc5011Event, TrustAnchorConfig, TrustAnchorManager, TrustAnchorStatus};
 
 #[derive(Debug, Clone)]
 pub struct TxtRecord {
@@ -108,9 +104,137 @@ pub enum ResolverError {
     Timeout,
     #[error("Invalid domain: {0}")]
     InvalidDomain(String),
+    /// The validating upstream rejected the data. This is a lookup failure, not
+    /// an absence of records: it must never be cached as NODATA.
+    #[error("DNSSEC validation failed: {0}")]
+    Bogus(String),
+    /// The record type has no upstream lookup in this resolver.
+    #[error("unsupported record type: {0}")]
+    Unsupported(u16),
 }
 
 pub type ResolverResult<T> = Result<T, ResolverError>;
+
+/// One record as the upstream reported it, before the recursive layer encodes
+/// it. Names stay in presentation form here: `recursive.rs` is the only place
+/// that turns a name into wire bytes, so the one-owner-encoder rule has a
+/// single enforcement point.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolvedRecord {
+    /// A or AAAA, with the queried record type.
+    Address {
+        ip: IpAddr,
+        ttl: u32,
+    },
+    Cname {
+        target: String,
+        ttl: u32,
+    },
+    Ns {
+        target: String,
+        ttl: u32,
+    },
+    Mx {
+        exchange: String,
+        preference: u16,
+        ttl: u32,
+    },
+    Txt {
+        value: String,
+        ttl: u32,
+    },
+    Soa {
+        mname: String,
+        rname: String,
+        serial: u32,
+        refresh: i32,
+        retry: i32,
+        expire: i32,
+        minimum: u32,
+        ttl: u32,
+    },
+    Ptr {
+        target: String,
+        ttl: u32,
+    },
+    Srv {
+        priority: u16,
+        weight: u16,
+        port: u16,
+        target: String,
+        ttl: u32,
+    },
+    Naptr {
+        order: u16,
+        preference: u16,
+        /// Character-strings carried verbatim (RFC 3403 §4.1).
+        flags: Vec<u8>,
+        service: Vec<u8>,
+        regexp: Vec<u8>,
+        replacement: String,
+        ttl: u32,
+    },
+    Ds {
+        key_tag: u16,
+        algorithm: u8,
+        digest_type: u8,
+        digest: Vec<u8>,
+        ttl: u32,
+    },
+    Dnskey {
+        flags: u16,
+        protocol: u8,
+        algorithm: u8,
+        public_key: Vec<u8>,
+        ttl: u32,
+    },
+}
+
+/// One upstream RRset plus the response metadata a recursive answer must echo.
+///
+/// This is the only resolver result that separates "no records" from "lookup
+/// failed": `rcode` carries NXDOMAIN through instead of collapsing it to an
+/// empty set, and `negative_ttl` carries the SOA-derived TTL (RFC 2308 §3)
+/// instead of the fixed negative-cache default.
+#[derive(Debug, Clone, Default)]
+pub struct UpstreamRrset {
+    /// Records in the order the upstream returned them.
+    pub records: Vec<ResolvedRecord>,
+    /// NOERROR (0) or NXDOMAIN (3) as reported by the upstream response.
+    pub rcode: u8,
+    /// `min(SOA TTL, SOA MINIMUM)` when a negative response carried an SOA.
+    pub negative_ttl: Option<u32>,
+    /// The upstream marked the data as validated (AD bit or secure proof).
+    pub is_dnssec_validated: bool,
+}
+
+impl UpstreamRrset {
+    /// True when upstream answered NOERROR with no records: NODATA, not NXDOMAIN.
+    pub fn is_nodata(&self) -> bool {
+        self.records.is_empty() && self.rcode == crate::wire::RCODE_NOERROR
+    }
+
+    /// True when upstream answered NXDOMAIN (RFC 1035 §4.1.1 RCODE 3).
+    pub fn is_nxdomain(&self) -> bool {
+        self.rcode == crate::wire::RCODE_NXDOMAIN
+    }
+}
+
+/// Convert an upstream SOA into the negative TTL of RFC 2308 §3.
+///
+/// The SOA's own TTL bounds how long the negative answer may be cached, and so
+/// does its MINIMUM field; the smaller of the two wins.
+fn soa_negative_ttl(record: &hickory_proto::rr::Record) -> Option<u32> {
+    match &record.data {
+        RData::SOA(soa) => Some(negative_ttl_from_soa(record.ttl, soa)),
+        _ => None,
+    }
+}
+
+/// `min(SOA TTL, SOA MINIMUM)`, the negative-caching TTL of RFC 2308 §3.
+fn negative_ttl_from_soa(ttl: u32, soa: &hickory_proto::rr::rdata::SOA) -> u32 {
+    ttl.min(soa.minimum)
+}
 
 fn ensure_trailing_dot(name: &str) -> String {
     if name.ends_with('.') {
@@ -136,6 +260,141 @@ pub trait DnsResolver: Send + Sync {
     async fn lookup_ptr(&self, name: &str) -> ResolverResult<Option<PtrRecord>>;
     async fn lookup_srv(&self, name: &str) -> ResolverResult<Vec<SrvRecord>>;
     async fn lookup_cname(&self, name: &str) -> ResolverResult<Option<CNameRecord>>;
+
+    /// Look up one RRset, preserving the rcode and the SOA-derived negative TTL.
+    ///
+    /// The per-type helpers above cannot express the difference between "the
+    /// zone has no such record" and "the lookup failed", and they hard-code the
+    /// negative TTL. The recursive server answers from this method so a
+    /// SERVFAIL is never cached as NODATA and NXDOMAIN survives to the wire.
+    async fn lookup_rrset(&self, name: &str, record_type: u16) -> ResolverResult<UpstreamRrset>;
+}
+
+/// Map an upstream `RData` into the resolver-neutral record shape.
+///
+/// Returns `None` for a type the recursive server does not answer; the caller
+/// reports NOTIMP for those instead of a silently empty answer.
+pub fn resolved_record(data: &RData, ttl: u32) -> Option<ResolvedRecord> {
+    Some(match data {
+        RData::A(a) => ResolvedRecord::Address {
+            ip: IpAddr::V4(a.0),
+            ttl,
+        },
+        RData::AAAA(aaaa) => ResolvedRecord::Address {
+            ip: IpAddr::V6(aaaa.0),
+            ttl,
+        },
+        RData::CNAME(cname) => ResolvedRecord::Cname {
+            target: cname.to_string(),
+            ttl,
+        },
+        RData::NS(ns) => ResolvedRecord::Ns {
+            target: ns.to_string(),
+            ttl,
+        },
+        RData::MX(mx) => ResolvedRecord::Mx {
+            exchange: mx.exchange.to_string(),
+            preference: mx.preference,
+            ttl,
+        },
+        RData::TXT(txt) => ResolvedRecord::Txt {
+            value: txt.to_string(),
+            ttl,
+        },
+        RData::SOA(soa) => ResolvedRecord::Soa {
+            mname: soa.mname.to_string(),
+            rname: soa.rname.to_string(),
+            serial: soa.serial,
+            refresh: soa.refresh,
+            retry: soa.retry,
+            expire: soa.expire,
+            minimum: soa.minimum,
+            ttl,
+        },
+        RData::PTR(ptr) => ResolvedRecord::Ptr {
+            target: ptr.to_string(),
+            ttl,
+        },
+        RData::SRV(srv) => ResolvedRecord::Srv {
+            priority: srv.priority,
+            weight: srv.weight,
+            port: srv.port,
+            target: srv.target.to_string(),
+            ttl,
+        },
+        RData::NAPTR(naptr) => ResolvedRecord::Naptr {
+            order: naptr.order,
+            preference: naptr.preference,
+            // NAPTR character-strings are opaque bytes (RFC 3403 §4.1); they
+            // are carried through verbatim so a non-ASCII service field is
+            // not mangled by a lossy detour through `String`.
+            flags: naptr.flags.to_vec(),
+            service: naptr.services.to_vec(),
+            regexp: naptr.regexp.to_vec(),
+            replacement: naptr.replacement.to_string(),
+            ttl,
+        },
+        RData::DNSSEC(dnssec) => match dnssec {
+            hickory_proto::dnssec::rdata::DNSSECRData::DS(ds) => ResolvedRecord::Ds {
+                key_tag: ds.key_tag(),
+                algorithm: ds.algorithm().into(),
+                digest_type: ds.digest_type().into(),
+                digest: ds.digest().to_vec(),
+                ttl,
+            },
+            hickory_proto::dnssec::rdata::DNSSECRData::DNSKEY(dnskey) => {
+                use hickory_proto::dnssec::PublicKey;
+                ResolvedRecord::Dnskey {
+                    flags: dnskey.flags(),
+                    // DNSKEY RDATA carries a fixed protocol value (RFC 4034 §2.1).
+                    protocol: 3,
+                    algorithm: dnskey.public_key().algorithm().into(),
+                    public_key: dnskey.public_key().public_bytes().to_vec(),
+                    ttl,
+                }
+            }
+            _ => return None,
+        },
+        _ => return None,
+    })
+}
+
+/// Keep the records that answer `wanted` at `queried`.
+///
+/// Records owned by another name (the tail of a CNAME chain, or glue) are
+/// dropped: the recursive layer stamps every answer with the queried owner, so
+/// keeping them would label a target's record with the alias's name. The CNAME
+/// itself is kept, which is what lets the client follow the alias.
+fn collect_rrset(
+    answers: &[hickory_proto::rr::Record],
+    wanted: RecordType,
+    queried: &hickory_proto::rr::Name,
+) -> Vec<ResolvedRecord> {
+    answers
+        .iter()
+        .filter(|record| record.name == *queried)
+        .filter(|record| {
+            let record_type = record.record_type();
+            record_type == wanted || record_type == RecordType::CNAME
+        })
+        .filter_map(|record| resolved_record(&record.data, record.ttl))
+        .collect()
+}
+
+/// The rcode and SOA-derived negative TTL of a `NoRecords` error.
+fn no_records_outcome(no_records: &hickory_resolver::net::NoRecords) -> UpstreamRrset {
+    let negative_ttl = no_records.negative_ttl.or_else(|| {
+        no_records
+            .soa
+            .as_ref()
+            .map(|soa| negative_ttl_from_soa(soa.ttl, &soa.data))
+    });
+    UpstreamRrset {
+        records: Vec::new(),
+        rcode: no_records.response_code.low(),
+        negative_ttl,
+        is_dnssec_validated: false,
+    }
 }
 
 #[derive(Clone)]
@@ -188,10 +447,56 @@ impl DnsResolver for NoopResolver {
     async fn lookup_cname(&self, _name: &str) -> ResolverResult<Option<CNameRecord>> {
         Ok(None)
     }
+
+    async fn lookup_rrset(&self, _name: &str, record_type: u16) -> ResolverResult<UpstreamRrset> {
+        Err(ResolverError::Unsupported(record_type))
+    }
+}
+
+/// Privacy-oriented forwarder options: bounded attempts, case randomization
+/// (0x20) and a per-query timeout.
+fn qname_minimization_options(timeout_secs: u64) -> hickory_resolver::config::ResolverOpts {
+    let mut opts = hickory_resolver::config::ResolverOpts::default();
+    opts.timeout = std::time::Duration::from_secs(timeout_secs);
+    opts.attempts = 3;
+    opts
 }
 
 pub struct HickoryResolver {
     resolver: hickory_resolver::TokioResolver,
+}
+
+/// One forwarder upstream: address plus the port it is served on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct UpstreamEndpoint {
+    pub ip: IpAddr,
+    pub port: u16,
+}
+
+impl UpstreamEndpoint {
+    pub fn new(ip: IpAddr, port: u16) -> Self {
+        Self { ip, port }
+    }
+
+    /// A nameserver that speaks UDP and TCP on `port`.
+    ///
+    /// `NameServerConfig` carries the address only; the port lives on each
+    /// connection, which is why dropping it here made `:5353` unreachable.
+    fn name_server_config(self) -> hickory_resolver::config::NameServerConfig {
+        // `NameServerConfig` is non-exhaustive and carries the port on each
+        // connection, so start from the stock UDP+TCP pair and move both.
+        let mut config = hickory_resolver::config::NameServerConfig::udp_and_tcp(self.ip);
+        for connection in &mut config.connections {
+            connection.port = self.port;
+        }
+        config
+    }
+}
+
+impl std::fmt::Display for UpstreamEndpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.ip, self.port)
+    }
 }
 
 impl HickoryResolver {
@@ -207,24 +512,47 @@ impl HickoryResolver {
         upstream_ips: &[IpAddr],
         timeout_secs: u64,
     ) -> Result<Self, ResolverError> {
+        let endpoints: Vec<UpstreamEndpoint> = upstream_ips
+            .iter()
+            .map(|ip| UpstreamEndpoint::new(*ip, 53))
+            .collect();
+        Self::with_upstream_endpoints(&endpoints, timeout_secs)
+    }
+
+    /// Create a forwarder that queries each endpoint on its own port.
+    pub fn with_upstream_endpoints(
+        upstreams: &[UpstreamEndpoint],
+        timeout_secs: u64,
+    ) -> Result<Self, ResolverError> {
         let mut opts = hickory_resolver::config::ResolverOpts::default();
         opts.timeout = std::time::Duration::from_secs(timeout_secs);
-        Self::with_upstream_servers_and_options(upstream_ips, Some(opts))
+        Self::with_upstream_endpoints_and_options(upstreams, Some(opts))
     }
 
     pub fn with_upstream_servers_and_options(
         upstream_ips: &[IpAddr],
         opts: Option<hickory_resolver::config::ResolverOpts>,
     ) -> Result<Self, ResolverError> {
-        if upstream_ips.is_empty() {
+        let endpoints: Vec<UpstreamEndpoint> = upstream_ips
+            .iter()
+            .map(|ip| UpstreamEndpoint::new(*ip, 53))
+            .collect();
+        Self::with_upstream_endpoints_and_options(&endpoints, opts)
+    }
+
+    pub fn with_upstream_endpoints_and_options(
+        upstreams: &[UpstreamEndpoint],
+        opts: Option<hickory_resolver::config::ResolverOpts>,
+    ) -> Result<Self, ResolverError> {
+        if upstreams.is_empty() {
             return Err(ResolverError::InvalidDomain(
                 "No upstream DNS servers provided".to_string(),
             ));
         }
 
-        let name_servers = upstream_ips
+        let name_servers = upstreams
             .iter()
-            .map(|ip| hickory_resolver::config::NameServerConfig::udp_and_tcp(*ip))
+            .map(|endpoint| endpoint.name_server_config())
             .collect();
 
         let config =
@@ -256,17 +584,19 @@ impl HickoryResolver {
         upstream_ips: &[IpAddr],
         timeout_secs: u64,
     ) -> Result<Self, ResolverError> {
-        let mut opts = hickory_resolver::config::ResolverOpts::default();
-
-        // Timeout configuration
-        opts.timeout = std::time::Duration::from_secs(timeout_secs);
-        opts.attempts = 3;
-
-        // Privacy-friendly configuration
-        // Case randomization (0x20) helps mitigate spoofing
+        let mut opts = qname_minimization_options(timeout_secs);
         opts.case_randomization = true;
-
         Self::with_upstream_servers_and_options(upstream_ips, Some(opts))
+    }
+
+    /// QNAME-minimization options for a port-carrying endpoint list.
+    pub fn with_qname_minimization_endpoints(
+        upstreams: &[UpstreamEndpoint],
+        timeout_secs: u64,
+    ) -> Result<Self, ResolverError> {
+        let mut opts = qname_minimization_options(timeout_secs);
+        opts.case_randomization = true;
+        Self::with_upstream_endpoints_and_options(upstreams, Some(opts))
     }
 
     pub fn with_default_servers() -> Result<Self, ResolverError> {
@@ -597,6 +927,44 @@ impl DnsResolver for HickoryResolver {
             Err(_) => Ok(None),
         }
     }
+
+    async fn lookup_rrset(&self, name: &str, record_type: u16) -> ResolverResult<UpstreamRrset> {
+        use hickory_resolver::net::{DnsError, NetError};
+
+        let name = ensure_trailing_dot(name);
+        let wanted = RecordType::from(record_type);
+        let queried = match hickory_proto::rr::Name::from_str(&name) {
+            Ok(queried) => queried,
+            Err(error) => {
+                return Err(ResolverError::InvalidDomain(format!(
+                    "Invalid domain name {name}: {error}"
+                )))
+            }
+        };
+
+        match self.resolver.lookup(&name, wanted).await {
+            Ok(lookup) => {
+                let message = lookup.message();
+                Ok(UpstreamRrset {
+                    records: collect_rrset(lookup.answers(), wanted, &queried),
+                    // A successful hickory lookup is always NOERROR: NXDOMAIN
+                    // arrives as `NoRecordsFound` below.
+                    rcode: message.metadata.response_code.low(),
+                    negative_ttl: lookup.authorities().iter().find_map(soa_negative_ttl),
+                    is_dnssec_validated: message.metadata.authentic_data,
+                })
+            }
+            Err(NetError::Dns(DnsError::NoRecordsFound(no_records))) => {
+                Ok(no_records_outcome(&no_records))
+            }
+            Err(NetError::Dns(DnsError::DnssecBogus)) => Err(ResolverError::Bogus(format!(
+                "{name} {wanted} failed validation"
+            ))),
+            Err(error) => Err(ResolverError::QueryFailed(format!(
+                "{wanted} lookup for {name} failed: {error}"
+            ))),
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -613,14 +981,45 @@ struct LookupResult {
     pub is_dnssec_validated: bool,
 }
 
+/// Load a static DNSSEC trust-anchor file.
+///
+/// This is the only supported anchor source (decision T5): the file is read at
+/// startup and never modified at runtime. There is no RFC 5011 observation,
+/// promotion, or revocation state machine, so a key added to or revoked in the
+/// root zone does not change these anchors until the file is replaced and the
+/// process restarted.
+pub fn load_static_trust_anchors(
+    path: &Path,
+) -> Result<hickory_proto::dnssec::TrustAnchors, String> {
+    hickory_proto::dnssec::TrustAnchors::from_file(path)
+        .map_err(|error| format!("{}: {error}", path.display()))
+}
+
+/// Recursion limits handed to hickory's iterative resolver.
+///
+/// `recursion_limit` is `dns.recursive.max_recursion_depth`. hickory's other
+/// knob (`ns_recursion_limit`) bounds nameserver-pool depth, not CNAME chain
+/// length, so the configured `max_cname_depth` is enforced by the recursive
+/// server itself and is deliberately not mapped onto it.
+#[derive(Debug, Clone, Copy)]
+pub struct RecursorLimits {
+    pub recursion_limit: u8,
+}
+
+impl Default for RecursorLimits {
+    fn default() -> Self {
+        // hickory's own default, for callers that do not configure a limit.
+        Self {
+            recursion_limit: 24,
+        }
+    }
+}
+
 pub struct HickoryRecursor {
     recursor: Arc<
         hickory_resolver::recursor::Recursor<hickory_resolver::net::runtime::TokioRuntimeProvider>,
     >,
     enable_dnssec: bool,
-    trust_anchor_manager: Option<Arc<TrustAnchorManager>>,
-    shutdown_tx: tokio::sync::Mutex<Option<tokio::sync::watch::Sender<()>>>,
-    rfc5011_handle: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl Clone for HickoryRecursor {
@@ -628,9 +1027,6 @@ impl Clone for HickoryRecursor {
         Self {
             recursor: self.recursor.clone(),
             enable_dnssec: self.enable_dnssec,
-            trust_anchor_manager: self.trust_anchor_manager.clone(),
-            shutdown_tx: tokio::sync::Mutex::new(None),
-            rfc5011_handle: tokio::sync::Mutex::new(None),
         }
     }
 }
@@ -645,64 +1041,21 @@ impl HickoryRecursor {
             Path::new(root_hints_path),
             Path::new(trust_anchor_path),
             enable_dnssec,
+            RecursorLimits::default(),
         )
     }
 
+    /// Build the recursor, handing hickory the configured recursion limit.
     pub fn from_paths(
         root_hints_path: &Path,
         trust_anchor_path: &Path,
         enable_dnssec: bool,
+        limits: RecursorLimits,
     ) -> Result<Self, ResolverError> {
         let root_ips = Self::load_root_hints(root_hints_path)?;
 
-        let roots: Vec<hickory_resolver::config::NameServerConfig> = root_ips
-            .iter()
-            .map(|ip| hickory_resolver::config::NameServerConfig::udp_and_tcp(*ip))
-            .collect();
-
-        let trust_anchor_manager: Option<Arc<TrustAnchorManager>> = if enable_dnssec {
-            let db_path = trust_anchor_path
-                .with_extension("db")
-                .to_string_lossy()
-                .to_string();
-            let config = TrustAnchorConfig {
-                enabled: true,
-                db_path,
-                anchor_file_path: trust_anchor_path.to_string_lossy().to_string(),
-                refresh_interval_secs: 3600,
-                pending_observation_days: 30,
-                revocation_grace_days: 30,
-                extended_removal_days: 60,
-                trust_anchor_retention_days: 7,
-                allow_key_rotation: true,
-            };
-
-            let manager = TrustAnchorManager::new(config);
-
-            if let Err(e) =
-                manager.load_initial_anchors_from_file(&trust_anchor_path.to_string_lossy())
-            {
-                tracing::warn!(
-                    "Failed to load initial anchors from {}: {}",
-                    trust_anchor_path.display(),
-                    e
-                );
-            } else {
-                tracing::info!(
-                    "Loaded {} initial trust anchors from {}",
-                    manager.get_status().total_anchors,
-                    trust_anchor_path.display()
-                );
-            }
-
-            Some(Arc::new(manager))
-        } else {
-            None
-        };
-
         let dnssec_policy = if enable_dnssec {
-            let trust_anchors =
-                Self::build_trust_anchors(trust_anchor_path, trust_anchor_manager.as_ref());
+            let trust_anchors = Self::build_trust_anchors(trust_anchor_path);
             let mut config = hickory_resolver::recursor::DnssecConfig::default();
             config.trust_anchor = Some(std::sync::Arc::new(trust_anchors));
             hickory_resolver::recursor::DnssecPolicy::ValidateWithStaticKey(config)
@@ -710,14 +1063,15 @@ impl HickoryRecursor {
             hickory_resolver::recursor::DnssecPolicy::SecurityUnaware
         };
 
-        // Case randomization (0x20) helps mitigate spoofing
+        // Case randomization (0x20) helps mitigate spoofing.
         let recursor_opts = hickory_resolver::recursor::RecursorOptions {
             case_randomization: true,
+            recursion_limit: limits.recursion_limit,
             ..Default::default()
         };
 
         let recursor = hickory_resolver::recursor::Recursor::new(
-            &roots.iter().map(|c| c.ip).collect::<Vec<_>>(),
+            &root_ips,
             dnssec_policy,
             None,
             recursor_opts,
@@ -726,137 +1080,42 @@ impl HickoryRecursor {
         .map_err(|e| ResolverError::QueryFailed(format!("Failed to build recursor: {}", e)))?;
 
         tracing::info!(
-            "Created recursive resolver (DNSSEC: {}, RFC 5011: {})",
+            "Created recursive resolver (DNSSEC: {}, trust anchors: {}, recursion_limit: {})",
             if enable_dnssec { "enabled" } else { "disabled" },
-            if trust_anchor_manager.is_some() {
-                "enabled"
-            } else {
-                "disabled"
-            }
+            trust_anchor_path.display(),
+            limits.recursion_limit
         );
 
         Ok(Self {
             recursor: Arc::new(recursor),
             enable_dnssec,
-            trust_anchor_manager,
-            shutdown_tx: tokio::sync::Mutex::new(None),
-            rfc5011_handle: tokio::sync::Mutex::new(None),
         })
     }
 
-    fn build_trust_anchors(
-        path: &Path,
-        manager: Option<&Arc<TrustAnchorManager>>,
-    ) -> hickory_proto::dnssec::TrustAnchors {
-        if let Some(manager) = manager {
-            let trusted_anchors = manager.get_trusted_anchors();
-            if !trusted_anchors.is_empty() {
-                let mut anchors = hickory_proto::dnssec::TrustAnchors::empty();
-                for anchor in trusted_anchors {
-                    use hickory_proto::dnssec::{Algorithm, PublicKeyBuf};
-                    let algorithm = Algorithm::from_u8(anchor.algorithm);
-                    let pkey = PublicKeyBuf::new(anchor.public_key, algorithm);
-                    let _ = anchors.insert(&pkey);
-                }
-                tracing::info!(
-                    "Built trust anchors from RFC 5011 manager ({} keys)",
-                    anchors.len()
-                );
-                return anchors;
-            }
-        }
-
-        match hickory_proto::dnssec::TrustAnchors::from_file(path) {
+    /// Load the static trust-anchor file.
+    ///
+    /// Anchors are a startup snapshot read from this file; there is no
+    /// observation/update state machine (RFC 5011 is not implemented — see
+    /// `docs/RFC5011_TRUST_ANCHOR.md`).
+    fn build_trust_anchors(path: &Path) -> hickory_proto::dnssec::TrustAnchors {
+        match load_static_trust_anchors(path) {
             Ok(anchors) => {
-                tracing::info!("Loaded DNSSEC trust anchors from {}", path.display());
+                tracing::info!(
+                    "Loaded {} static DNSSEC trust anchors from {}",
+                    anchors.len(),
+                    path.display()
+                );
                 anchors
             }
-            Err(e) => {
+            Err(error) => {
                 tracing::warn!(
                     "Failed to load trust anchors from {}, using defaults: {}",
                     path.display(),
-                    e
+                    error
                 );
                 hickory_proto::dnssec::TrustAnchors::default()
             }
         }
-    }
-
-    pub async fn start_rfc5011_updates(self: Arc<Self>) -> Result<(), ResolverError> {
-        let manager = match &self.trust_anchor_manager {
-            Some(m) => m.clone(),
-            None => {
-                return Err(ResolverError::QueryFailed(
-                    "No trust anchor manager configured".to_string(),
-                ))
-            }
-        };
-
-        let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(());
-
-        tracing::info!("Starting RFC 5011 trust anchor update task");
-
-        let handle = tokio::spawn(async move {
-            let mut check_interval = interval(Duration::from_secs(3600));
-
-            loop {
-                tokio::select! {
-                    _ = check_interval.tick() => {
-                        tracing::debug!("RFC 5011: Checking for trust anchor updates");
-
-                        let events = manager.process_rfc5011_updates();
-
-                        for event in &events {
-                            match event {
-                                Rfc5011Event::KeyPromoted { key_tag } => {
-                                    tracing::info!("RFC 5011: Key {} promoted to trusted", key_tag);
-                                }
-                                Rfc5011Event::KeyRevoked { key_tag } => {
-                                    tracing::warn!("RFC 5011: Key {} has been revoked", key_tag);
-                                }
-                                Rfc5011Event::KeyRemoved { key_tag } => {
-                                    tracing::info!("RFC 5011: Key {} removed from trust anchors", key_tag);
-                                }
-                                Rfc5011Event::KeyMissing { key_tag } => {
-                                    tracing::warn!("RFC 5011: Key {} is missing from DNSKEY RRset", key_tag);
-                                }
-                                Rfc5011Event::KeyPurged { key_tag } => {
-                                    tracing::info!("RFC 5011: Key {} purged from storage", key_tag);
-                                }
-                                _ => {}
-                            }
-                        }
-
-                        if !events.is_empty() {
-                            tracing::info!("RFC 5011: Processed {} trust anchor events", events.len());
-                        }
-                    }
-                    _ = shutdown_rx.changed() => {
-                        tracing::info!("RFC 5011: Shutting down trust anchor update task");
-                        break;
-                    }
-                }
-            }
-        });
-
-        tracing::info!("RFC 5011: Background task spawned successfully");
-
-        *self.shutdown_tx.lock().await = Some(shutdown_tx);
-        *self.rfc5011_handle.lock().await = Some(handle);
-        Ok(())
-    }
-
-    pub async fn stop_rfc5011_updates(&self) {
-        if let Some(tx) = self.shutdown_tx.lock().await.take() {
-            let _ = tx.send(());
-        }
-        tracing::info!("RFC 5011: Shutdown signal sent");
-    }
-
-    pub fn get_trust_anchor_status(&self) -> Option<TrustAnchorStatus> {
-        self.trust_anchor_manager
-            .as_ref()
-            .map(|m: &Arc<TrustAnchorManager>| m.get_status())
     }
 
     fn load_root_hints(path: &Path) -> Result<Vec<IpAddr>, ResolverError> {
@@ -1085,219 +1344,40 @@ impl HickoryRecursor {
         }
     }
 
-    pub async fn lookup_dnskey(&self, name: &str) -> ResolverResult<Vec<DnsKeyRecord>> {
-        use hickory_proto::dnssec::Algorithm;
-
-        let name = ensure_trailing_dot(name);
-
-        let query_name = hickory_proto::rr::Name::from_str(&name)
-            .map_err(|e| ResolverError::InvalidDomain(format!("Invalid domain name: {}", e)))?;
-
-        let query = hickory_proto::op::Query::query(query_name, RecordType::DNSKEY);
-
-        let lookup = self
-            .recursor
-            .resolve(query, Instant::now(), self.enable_dnssec)
-            .await
-            .map_err(|e| ResolverError::QueryFailed(format!("DNSKEY lookup failed: {}", e)))?;
-
-        let ttl = Some(60);
-        let mut records = Vec::new();
-
-        for proven_record in lookup.answers.iter() {
-            let record = proven_record;
-            let RData::DNSSEC(hickory_proto::dnssec::rdata::DNSSECRData::DNSKEY(dnskey)) =
-                &record.data
-            else {
-                continue;
-            };
-
-            let algorithm: Algorithm = dnskey.public_key().algorithm();
-            let algorithm_u8: u8 = algorithm.into();
-            let public_key_bytes = dnskey.public_key().public_bytes();
-            let key_tag = Self::compute_key_tag_from_rdata(algorithm_u8, public_key_bytes);
-            let is_revoked = dnskey.revoke();
-
-            if let Some(manager) = &self.trust_anchor_manager {
-                let _ = manager.observe_dnskey_at_root(
-                    key_tag,
-                    algorithm_u8,
-                    public_key_bytes,
-                    is_revoked,
-                );
-            }
-
-            records.push(DnsKeyRecord {
-                key_tag,
-                algorithm: algorithm_u8,
-                flags: dnskey.flags(),
-                public_key: public_key_bytes.to_vec(),
-                is_secure: lookup.authentic_data,
-                is_revoked,
-                ttl,
-            });
-        }
-
-        if records.is_empty() {
-            for record in lookup.answers.iter() {
-                if let RData::DNSSEC(hickory_proto::dnssec::rdata::DNSSECRData::DNSKEY(dnskey)) =
-                    &record.data
-                {
-                    let algorithm: Algorithm = dnskey.public_key().algorithm();
-                    let algorithm_u8: u8 = algorithm.into();
-                    let public_key_bytes = dnskey.public_key().public_bytes();
-                    let key_tag = Self::compute_key_tag_from_rdata(algorithm_u8, public_key_bytes);
-
-                    records.push(DnsKeyRecord {
-                        key_tag,
-                        algorithm: algorithm_u8,
-                        flags: dnskey.flags(),
-                        public_key: public_key_bytes.to_vec(),
-                        is_secure: false,
-                        is_revoked: dnskey.revoke(),
-                        ttl,
-                    });
-                }
-            }
-        }
-
-        Ok(records)
-    }
-
-    pub async fn lookup_cds(&self, name: &str) -> ResolverResult<Vec<CdsRecord>> {
-        let name = ensure_trailing_dot(name);
-
-        let query_name = hickory_proto::rr::Name::from_str(&name)
-            .map_err(|e| ResolverError::InvalidDomain(format!("Invalid domain name: {}", e)))?;
-
-        let query = hickory_proto::op::Query::query(query_name, RecordType::CDS);
-
-        let lookup = self
-            .recursor
-            .resolve(query, Instant::now(), self.enable_dnssec)
-            .await
-            .map_err(|e| ResolverError::QueryFailed(format!("CDS lookup failed: {}", e)))?;
-
-        let ttl = Some(60);
-        let mut records = Vec::new();
-
-        for proven_record in lookup.answers.iter() {
-            let record = proven_record;
-            let RData::DNSSEC(hickory_proto::dnssec::rdata::DNSSECRData::CDS(cds)) = &record.data
-            else {
-                continue;
-            };
-
-            let key_tag = cds.key_tag();
-            let algorithm_opt = cds.algorithm();
-
-            if let Some(algorithm) = algorithm_opt {
-                let algorithm_u8: u8 = algorithm.into();
-                let digest_type: u8 = cds.digest_type().into();
-                let digest = cds.digest();
-
-                if let Some(manager) = &self.trust_anchor_manager {
-                    let _ = manager.trust_anchor_check(
-                        key_tag,
-                        algorithm_u8,
-                        digest_type,
-                        digest,
-                        None,
-                    );
-                }
-
-                records.push(CdsRecord {
-                    key_tag,
-                    algorithm: algorithm_u8,
-                    digest_type,
-                    digest: digest.to_vec(),
-                    is_secure: lookup.authentic_data,
-                    ttl,
-                });
-            }
-        }
-
-        Ok(records)
-    }
-
-    pub async fn perform_rfc5011_trust_anchor_check(
+    /// Look up one RRset through the iterative resolver, keeping the rcode and
+    /// the SOA-derived negative TTL that a recursive answer must echo.
+    async fn recursive_rrset(
         &self,
-        zone: &str,
-    ) -> ResolverResult<Rfc5011CheckResult> {
-        let mut events = Vec::new();
-        let mut new_keys_seen = 0;
-        let mut keys_promoted = 0;
-        let mut keys_revoked = 0;
+        name: &str,
+        record_type: RecordType,
+    ) -> ResolverResult<UpstreamRrset> {
+        let name = ensure_trailing_dot(name);
 
-        let dnskey_records = self.lookup_dnskey(zone).await?;
-        let cds_records = self.lookup_cds(zone).await?;
+        let query_name = hickory_proto::rr::Name::from_str(&name)
+            .map_err(|e| ResolverError::InvalidDomain(format!("Invalid domain name: {}", e)))?;
 
-        let dnskey_keytags: Vec<u16> = dnskey_records.iter().map(|r| r.key_tag).collect();
+        let queried = query_name.clone();
+        let query = hickory_proto::op::Query::query(query_name, record_type);
 
-        for record in &dnskey_records {
-            if record.is_revoked {
-                keys_revoked += 1;
-            }
-        }
+        let message = self
+            .recursor
+            .resolve(query, Instant::now(), self.enable_dnssec)
+            .await
+            .map_err(|e| ResolverError::QueryFailed(format!("Recursive lookup failed: {}", e)))?;
 
-        if let Some(manager) = &self.trust_anchor_manager {
-            for record in cds_records {
-                let event = manager.trust_anchor_check(
-                    record.key_tag,
-                    record.algorithm,
-                    record.digest_type,
-                    &record.digest,
-                    Some(&dnskey_keytags),
-                );
-                match &event {
-                    crate::trust_anchor::Rfc5011Event::NewKeySeen { .. } => new_keys_seen += 1,
-                    crate::trust_anchor::Rfc5011Event::KeyPromoted { .. } => keys_promoted += 1,
-                    _ => {}
-                }
-                events.push(event);
-            }
-        }
+        let negative_ttl = message
+            .authorities
+            .iter()
+            .find_map(soa_negative_ttl)
+            .or_else(|| message.additionals.iter().find_map(soa_negative_ttl));
 
-        Ok(Rfc5011CheckResult {
-            events,
-            new_keys_seen,
-            keys_promoted,
-            keys_revoked,
+        Ok(UpstreamRrset {
+            records: collect_rrset(&message.answers, record_type, &queried),
+            rcode: message.metadata.response_code.low(),
+            negative_ttl,
+            is_dnssec_validated: message.metadata.authentic_data,
         })
     }
-
-    fn compute_key_tag_from_rdata(algorithm: u8, public_key: &[u8]) -> u16 {
-        crate::dnssec::calculate_key_tag(257, 3, algorithm, public_key)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct DnsKeyRecord {
-    pub key_tag: u16,
-    pub algorithm: u8,
-    pub flags: u16,
-    pub public_key: Vec<u8>,
-    pub is_secure: bool,
-    pub is_revoked: bool,
-    pub ttl: Option<u32>,
-}
-
-#[derive(Debug, Clone)]
-pub struct CdsRecord {
-    pub key_tag: u16,
-    pub algorithm: u8,
-    pub digest_type: u8,
-    pub digest: Vec<u8>,
-    pub is_secure: bool,
-    pub ttl: Option<u32>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Rfc5011CheckResult {
-    pub events: Vec<crate::trust_anchor::Rfc5011Event>,
-    pub new_keys_seen: usize,
-    pub keys_promoted: usize,
-    pub keys_revoked: usize,
 }
 
 #[async_trait]
@@ -1366,5 +1446,10 @@ impl DnsResolver for HickoryRecursor {
             Ok(result) => Ok(result.cname_record),
             Err(e) => Err(e),
         }
+    }
+
+    async fn lookup_rrset(&self, name: &str, record_type: u16) -> ResolverResult<UpstreamRrset> {
+        self.recursive_rrset(name, RecordType::from(record_type))
+            .await
     }
 }

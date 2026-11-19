@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use metrics::{counter, gauge, histogram};
 use parking_lot::RwLock;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Semaphore};
 
 use crate::runtime_config::DoqRuntimeConfig;
 use crate::secure_transport::SecureTransportConfig;
@@ -132,14 +132,48 @@ impl DoqServer {
         config: Arc<DoqRuntimeConfig>,
         mut shutdown_rx: oneshot::Receiver<()>,
     ) {
+        // Phase 03 (D33): cap concurrent QUIC connections exactly like the
+        // stream transports. The permit is acquired before the handshake is
+        // awaited, so a flood of half-open QUIC handshakes cannot pin an
+        // unbounded number of connection tasks.
+        let max_connections = dns_server
+            .read()
+            .as_ref()
+            .map(|server| server.max_encrypted_connections())
+            .unwrap_or(crate::secure_server::DEFAULT_MAX_ENCRYPTED_CONNECTIONS);
+        let permits = Arc::new(Semaphore::new(max_connections));
+
         loop {
             tokio::select! {
                 incoming = endpoint.accept() => {
                     match incoming {
                         Some(conn) => {
+                            let permit = match Arc::clone(&permits).try_acquire_owned() {
+                                Ok(permit) => permit,
+                                Err(_) => {
+                                    metrics::counter!(
+                                        "synvoid.dns.encrypted_connections.saturated",
+                                        "transport" => "DoQ"
+                                    )
+                                    .increment(1);
+                                    tracing::warn!(
+                                        transport = "DoQ",
+                                        remote_addr = %conn.remote_address(),
+                                        max_connections,
+                                        "Encrypted DNS connection rejected: connection cap reached"
+                                    );
+                                    // Refuse at the QUIC layer so the client
+                                    // sees an immediate reject, not a timeout.
+                                    conn.refuse();
+                                    continue;
+                                }
+                            };
+
                             let dns_server = dns_server.clone();
                             let config = config.clone();
                             tokio::spawn(async move {
+                                // Held for the whole connection lifetime.
+                                let _permit = permit;
                                 if let Err(e) = Self::handle_connection(conn, dns_server, config).await {
                                     tracing::debug!("DoQ connection error: {}", e);
                                 }
@@ -167,11 +201,27 @@ impl DoqServer {
         dns_server: Arc<RwLock<Option<DnsServer>>>,
         _config: Arc<DoqRuntimeConfig>,
     ) -> Result<(), String> {
-        let connection = match incoming.await {
-            Ok(conn) => conn,
-            Err(e) => {
+        // The QUIC handshake includes the TLS handshake; without a bound a
+        // peer can hold a connection slot without ever completing TLS.
+        let connection = match tokio::time::timeout(
+            std::time::Duration::from_secs(crate::secure_server::TLS_HANDSHAKE_TIMEOUT_SECS),
+            incoming,
+        )
+        .await
+        {
+            Ok(Ok(conn)) => conn,
+            Ok(Err(e)) => {
                 counter!("synvoid.doq.connection.errors").increment(1);
                 return Err(format!("DoQ handshake failed: {}", e));
+            }
+            Err(_) => {
+                counter!("synvoid.doq.connection.errors").increment(1);
+                tracing::warn!(
+                    transport = "DoQ",
+                    "DoQ handshake timed out after {}s",
+                    crate::secure_server::TLS_HANDSHAKE_TIMEOUT_SECS
+                );
+                return Err("DoQ handshake timeout".to_string());
             }
         };
 
@@ -269,18 +319,39 @@ impl DoqServer {
         let query_buf = Self::read_query(&mut recv).await?;
         counter!("synvoid.doq.queries.total").increment(1);
 
-        let response = {
+        // Clone the server handle so the read lock is not held across the
+        // await (a `parking_lot` guard is not `Send`).
+        let server = {
             let dns_server_guard = dns_server.read();
-            let server = match dns_server_guard.as_ref() {
-                Some(s) => s,
-                None => {
-                    counter!("synvoid.doq.query.errors").increment(1);
-                    return Err("DNS server not configured".to_string());
-                }
-            };
-
-            Self::process_query(server, &query_buf, client_ip)
+            dns_server_guard.as_ref().cloned()
         };
+        let Some(server) = server else {
+            counter!("synvoid.doq.query.errors").increment(1);
+            return Err("DNS server not configured".to_string());
+        };
+        let ctx = server.query_context();
+
+        // One admission gate for every transport (D12b).
+        let admitted = match crate::server::admit(
+            &query_buf,
+            client_ip,
+            crate::server::TransportKind::Quic,
+            &ctx,
+        ) {
+            crate::server::Admission::Allow(admitted) => admitted,
+            crate::server::Admission::Reply(response) => {
+                Self::write_response(&mut send, &response).await?;
+                return Ok(());
+            }
+            // No DNS response exists. Returning without writing finishes the
+            // stream empty, which the client observes as a reset rather than
+            // a response (RFC 9250 has no "silent" response).
+            crate::server::Admission::Drop => return Ok(()),
+        };
+
+        let response =
+            crate::server::DnsServer::serve_admitted(&ctx, &admitted, &query_buf, Some(client_ip))
+                .await;
 
         match response {
             Some(resp) => {
@@ -293,22 +364,6 @@ impl DoqServer {
         }
 
         Ok(())
-    }
-
-    fn process_query(server: &DnsServer, query: &[u8], client_ip: IpAddr) -> Option<Arc<Vec<u8>>> {
-        let ctx = server.query_context();
-
-        if let Some(c) = &ctx.cache {
-            crate::server::DnsServer::handle_query_with_cache(
-                &ctx,
-                query,
-                c,
-                crate::cache::TransportClass::Quic,
-                Some(client_ip),
-            )
-        } else {
-            crate::server::DnsServer::handle_query(&ctx, query, Some(client_ip))
-        }
     }
 
     async fn read_query(recv: &mut quinn::RecvStream) -> Result<Vec<u8>, String> {

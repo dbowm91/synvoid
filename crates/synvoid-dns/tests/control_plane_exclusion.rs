@@ -15,7 +15,7 @@ use support::zone::{zone_with_records, zone_with_soa};
 use synvoid_dns::cache::{CacheKey, DnsCache, TransportClass};
 use synvoid_dns::query_coalesce::{should_skip_coalescing, QueryCoalescer, QueryKey};
 use synvoid_dns::server::{DnsZoneRecord, RecordType, ShardedZoneStore};
-use synvoid_dns::transfer::ZoneTransfer;
+use synvoid_dns::transfer::{TransferAcl, ZoneTransfer};
 use synvoid_dns::update::DynamicUpdateHandler;
 use synvoid_dns::wire;
 
@@ -85,7 +85,7 @@ fn axfr_bypasses_cache_returns_full_zone() {
     // and that the ZoneTransfer handler reads from zone store directly.
     let zt = ZoneTransfer::with_security_config(
         zones.clone(),
-        vec!["*".to_string()],
+        TransferAcl::from_entries(&["*".to_string()]),
         None,  // no TSIG verifier
         true,  // allow_wildcard_transfer
         false, // wildcard_transfer_requires_tsig
@@ -94,7 +94,8 @@ fn axfr_bypasses_cache_returns_full_zone() {
         false, // require_tsig
         true,  // axfr_enabled
         false, // tcp_only
-    );
+    )
+    .expect("no TSIG required");
 
     let response = zt.handle_axfr_request(
         &format!("{}.", origin),
@@ -102,7 +103,7 @@ fn axfr_bypasses_cache_returns_full_zone() {
         None, // no TSIG
         0xCAF,
         &query,
-        false, // not TCP
+        true, // the handler path for a transfer is TCP
     );
 
     assert!(response.is_ok(), "AXFR must succeed: {:?}", response.err());
@@ -193,6 +194,7 @@ async fn axfr_bypasses_coalescer_concurrent_queries_independent() {
         qtype: 252, // AXFR
         qclass: 1,
         dnssec_ok: false,
+        cd: false,
         client_ip: Some("10.0.0.1".to_string()),
         transport_class: TransportClass::Tcp,
         namespace: synvoid_dns::cache::CacheNamespace::Authoritative,
@@ -203,6 +205,7 @@ async fn axfr_bypasses_coalescer_concurrent_queries_independent() {
         qtype: 252, // AXFR
         qclass: 1,
         dnssec_ok: false,
+        cd: false,
         client_ip: Some("10.0.0.2".to_string()),
         transport_class: TransportClass::Tcp,
         namespace: synvoid_dns::cache::CacheNamespace::Authoritative,
@@ -292,6 +295,7 @@ fn update_bypasses_cache_and_invalidates_after_mutation() {
     // Create UPDATE handler with cache wired in
     let handler = DynamicUpdateHandler::new(zones.clone())
         .with_config(true, true, false)
+        .expect("no TSIG required")
         .with_cache(cache.clone());
 
     // Build an UPDATE that adds a new A record: newhost → 192.0.2.50
@@ -324,9 +328,10 @@ fn update_bypasses_cache_and_invalidates_after_mutation() {
         "cache must be invalidated after UPDATE (stale entry removed)"
     );
 
-    // Verify the zone mutation actually happened
+    // Verify the zone mutation actually happened. UPDATE owner names are
+    // normalized to the origin-relative form the query path looks up.
     let zone = zones.get(origin).expect("zone must exist");
-    let new_key = (format!("newhost.{}", origin), RecordType::A);
+    let new_key = ("newhost".to_string(), RecordType::A);
     assert!(
         zone.records.contains_key(&new_key),
         "zone must contain the new A record added by UPDATE"
@@ -472,24 +477,26 @@ fn axfr_reflects_zone_store_not_cache() {
     // Now add a NEW record to the zone (simulating a concurrent update
     // that happened after the cache was populated)
     {
-        let mut zone = zones.get(origin).unwrap();
-        zone.records.insert(
-            ("mail".to_string(), RecordType::A),
-            vec![DnsZoneRecord {
-                name: "mail".to_string(),
-                record_type: RecordType::A,
-                value: "192.0.2.25".to_string(),
-                ttl: 300,
-                priority: None,
-            }],
-        );
-        zones.insert(origin.to_string(), zone);
+        // Phase 09: `get` returns a served snapshot (`Arc<Zone>`); mutation
+        // goes through the store's writer so the owner index stays current.
+        zones.update_zone(origin, |zone| {
+            zone.records.insert(
+                ("mail".to_string(), RecordType::A),
+                vec![DnsZoneRecord {
+                    name: "mail".to_string(),
+                    record_type: RecordType::A,
+                    value: "192.0.2.25".to_string(),
+                    ttl: 300,
+                    priority: None,
+                }],
+            );
+        });
     }
 
     // Build AXFR query and handle it
     let zt = ZoneTransfer::with_security_config(
         zones.clone(),
-        vec!["*".to_string()],
+        TransferAcl::from_entries(&["*".to_string()]),
         None,  // no TSIG verifier
         true,  // allow_wildcard_transfer
         false, // wildcard_transfer_requires_tsig
@@ -498,11 +505,12 @@ fn axfr_reflects_zone_store_not_cache() {
         false, // require_tsig
         true,  // axfr_enabled
         false, // tcp_only
-    );
+    )
+    .expect("no TSIG required");
 
     let query = build_axfr_query(0xCAFE, origin);
     let response =
-        zt.handle_axfr_request(&format!("{}.", origin), client, None, 0xCAF, &query, false);
+        zt.handle_axfr_request(&format!("{}.", origin), client, None, 0xCAF, &query, true);
 
     assert!(response.is_ok(), "AXFR must succeed: {:?}", response.err());
     let bytes = response.unwrap();
@@ -551,6 +559,7 @@ fn update_uses_dynamic_update_invalidation_reason() {
 
     let handler = DynamicUpdateHandler::new(zones.clone())
         .with_config(true, true, false)
+        .expect("no TSIG required")
         .with_cache(cache.clone());
 
     let query = build_update_add_record(

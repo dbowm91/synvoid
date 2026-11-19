@@ -16,6 +16,7 @@ pub mod cache;
 pub mod compression;
 pub mod cookie;
 pub mod crypto_rng;
+pub mod denial;
 pub mod dns64;
 pub mod dnssec;
 pub mod dnssec_key_mgmt;
@@ -48,7 +49,6 @@ pub mod secure_transport;
 pub mod server;
 pub mod store;
 pub mod transfer;
-pub mod trust_anchor;
 pub mod tsig;
 pub mod update;
 pub mod wire;
@@ -71,6 +71,7 @@ pub use cache::{
     CachedResponse, DnsCache, InvalidationReason, SecureDnsCache, TransportClass,
 };
 pub use cookie::{build_cookie_option, DnsCookieServer};
+pub use denial::{DenialKind, DenialMode, Nsec3Chain, ZoneDenial};
 pub use dns64::{Dns64Config, Dns64Translator};
 pub use dnssec::{
     Algorithm, DnsSecKeyManager, DnsSecKeyStatus, KeyInfo, KeyRotationConfig, KeyRotationResult,
@@ -102,20 +103,25 @@ pub use metrics::{
 pub use notify::{build_notify_response, NotifyConfig, NotifyHandler};
 pub use parsed_query::{
     build_response_flags as build_response_flags_canonical, build_response_flags_from_query,
-    build_response_flags_with_policy, ParsedDnsQuery, QueryFlags, QueryParseError, ResponsePolicy,
+    build_response_flags_with_policy, declared_records_well_formed, ParsedDnsQuery, QueryFlags,
+    QueryParseError, ResponsePolicy,
 };
 pub use platform::{create_platform, AnycastSocketPlatform};
 pub use qname::RebindingChecker;
 pub use query_coalesce::{CoalesceResult, QueryCoalescer, QueryKey};
 pub use query_validator::{DnsQueryClass, DnsQueryType, DnsQueryValidator};
-pub use recursive::{RecursiveDnsError, RecursiveDnsResult, RecursiveDnsServer};
+pub use recursive::{
+    AnswerSet, RecursiveDnsError, RecursiveDnsResult, RecursiveDnsServer, ResolveError,
+};
 pub use recursive_cache::{
-    CacheEntry, CachedRecord, DnssecValidationState, NegativeCacheEntry, PositiveCacheEntry,
-    RecursiveCacheKey, RecursiveCacheStats, RecursiveDnsCache, RecursiveRecordType,
+    CacheEntry, CacheHit, CacheLookup, CachedRecord, DnssecValidationState, NegativeCacheEntry,
+    PositiveCacheEntry, RecursiveCacheKey, RecursiveCacheStats, RecursiveDnsCache,
+    RecursiveRecordType,
 };
 pub use resolver::{
-    CdsRecord, DnsKeyRecord, DnsResolver, HickoryRecursor, HickoryResolver, NoopResolver, NsRecord,
-    ResolverError, ResolverResult, Rfc5011CheckResult, TxtRecord,
+    load_static_trust_anchors, DnsResolver, HickoryRecursor, HickoryResolver, NoopResolver,
+    NsRecord, RecursorLimits, ResolvedRecord, ResolverError, ResolverResult, TxtRecord,
+    UpstreamEndpoint, UpstreamRrset,
 };
 pub use resolver_global::GlobalNodeResolver;
 pub use rpz::{RpzAction, RpzManager, RpzPolicy, RpzZone};
@@ -134,12 +140,12 @@ pub use runtime_config::{
 pub use secure_server::{
     DnsServerConfig, SecureDnsServerBase, MAX_QUERY_SIZE, TLS_HANDSHAKE_TIMEOUT_SECS,
 };
-pub use server::{DnsRateLimiter, DnsServer, DnsZoneRecord, DsRecordExport, RecordType, Zone};
+pub use server::{
+    admit, Admission, Admitted, DnsRateLimiter, DnsServer, DnsZoneRecord, DsRecordExport,
+    RecordType, TransportKind, Zone,
+};
 pub use store::ZoneStore;
 pub use transfer::{ZoneTransfer, AXFR_QUERY_TYPE, IXFR_QUERY_TYPE};
-pub use trust_anchor::{
-    Rfc5011Event, TrustAnchorConfig, TrustAnchorManager, TrustAnchorState, TrustAnchorStatus,
-};
 pub use tsig::{parse_tsig_from_query, TsigError, TsigKey, TsigParseResult, TsigVerifier};
 pub use update::{DynamicUpdate, DynamicUpdateHandler};
 pub use zone_file::{

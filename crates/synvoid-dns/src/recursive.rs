@@ -4,7 +4,7 @@
 //! the authoritative DNS server. It uses the hickory-resolver crate for
 //! upstream recursive resolution.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -12,6 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use hickory_proto::op::Message;
 use hickory_proto::rr::RecordType;
+use hickory_proto::serialize::binary::BinEncodable;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::Semaphore;
@@ -26,16 +27,62 @@ use crate::runtime_config::{
 use parking_lot::RwLock;
 
 use super::recursive_cache::{
-    CachedRecord, DnssecValidationState, RecursiveCacheKey, RecursiveDnsCache,
+    CacheHit, CacheLookup, CachedRecord, DnssecValidationState, RecursiveCacheKey,
+    RecursiveDnsCache,
 };
-use super::resolver::{MxRecord, SrvRecord};
+use super::resolver::{HickoryRecursor, RecursorLimits, ResolvedRecord, UpstreamEndpoint};
 use super::wire::{
-    build_error_response, build_response_header, get_message_id, parse_dns_message, RCODE_REFUSED,
-    RCODE_SERVFAIL,
+    build_response_header, get_message_id, parse_dns_message, RCODE_NOERROR, RCODE_NOTIMP,
+    RCODE_NXDOMAIN, RCODE_REFUSED, RCODE_SERVFAIL,
 };
-use super::{
-    server::DnsRateLimiter, DnsResolver, GlobalNodeResolver, HickoryRecursor, HickoryResolver,
-};
+use super::{server::DnsRateLimiter, DnsResolver, GlobalNodeResolver, HickoryResolver};
+
+/// TTL served with a stale answer. RFC 8767 §4 asks for a short TTL so the
+/// client retries soon instead of pinning data the resolver could not refresh.
+const STALE_SERVE_TTL: u32 = 30;
+
+/// A resolved answer and the rcode the response must echo.
+///
+/// This is what separates "no records" (NOERROR/NODATA, NXDOMAIN) from "the
+/// lookup failed": only an `AnswerSet` ever reaches the cache.
+#[derive(Debug, Clone)]
+pub struct AnswerSet {
+    pub records: Vec<CachedRecord>,
+    /// NOERROR (0) or NXDOMAIN (3).
+    pub rcode: u8,
+    /// `min(SOA TTL, SOA MINIMUM)` for a negative answer (RFC 2308 §3).
+    pub negative_ttl: Option<u32>,
+    pub validation_state: DnssecValidationState,
+}
+
+impl AnswerSet {
+    fn is_negative(&self) -> bool {
+        self.records.is_empty()
+    }
+}
+
+/// Why an upstream lookup did not produce an `AnswerSet`.
+///
+/// None of these are cacheable: a timeout, a refusal, a broken dependency, or
+/// bogus DNSSEC data is not "no such record" and must not become NODATA.
+#[derive(Debug, thiserror::Error)]
+pub enum ResolveError {
+    /// Transport or dependency failure: SERVFAIL.
+    #[error("upstream lookup failed: {0}")]
+    Upstream(String),
+    /// The upstream rejected the data during validation: SERVFAIL.
+    #[error("upstream data failed DNSSEC validation: {0}")]
+    Bogus(String),
+    /// The circuit breaker is open: SERVFAIL until recovery.
+    #[error("upstream circuit breaker is open")]
+    CircuitBreakerOpen,
+    /// The record type has no recursive lookup: NOTIMP.
+    #[error("query type {0} is not supported by the recursive resolver")]
+    NotImplemented(u16),
+    /// The answer chain is deeper than the configured limit: SERVFAIL.
+    #[error("CNAME chain exceeds max_cname_depth")]
+    DepthExceeded,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum RecursiveDnsError {
@@ -134,29 +181,58 @@ pub struct RecursiveDnsServer {
     query_semaphore: Arc<Semaphore>,
     running: Arc<tokio::sync::RwLock<bool>>,
     circuit_breaker: Arc<CircuitBreaker>,
-    client_semaphores: Arc<parking_lot::Mutex<HashMap<IpAddr, Arc<Semaphore>>>>,
+    client_semaphores: Arc<parking_lot::Mutex<HashMap<IpAddr, ClientSemaphoreEntry>>>,
+    /// Keys with a background refresh already in flight, so a stale-hit storm
+    /// cannot spawn one upstream query per client.
+    refresh_in_flight: Arc<parking_lot::Mutex<HashSet<RecursiveCacheKey>>>,
+}
+
+/// One per-client concurrency slot, with the tick it was last used at so
+/// exhaustion can evict the least-recently-used client instead of failing
+/// closed for a new one.
+struct ClientSemaphoreEntry {
+    semaphore: Arc<Semaphore>,
+    last_used: u64,
 }
 
 const MAX_CLIENT_SEMAPHORES: usize = 10_000;
 
 impl RecursiveDnsServer {
-    fn client_semaphore(&self, client_ip: IpAddr, max_per_client: usize) -> Option<Arc<Semaphore>> {
+    /// The per-client concurrency slot for `client_ip`.
+    ///
+    /// The table is bounded; when it is full the least-recently-used client is
+    /// evicted so a new client is never silently refused admission.
+    fn client_semaphore(
+        &self,
+        client_ip: IpAddr,
+        max_per_client: usize,
+        tick: u64,
+    ) -> Arc<Semaphore> {
         let mut map = self.client_semaphores.lock();
-        if let Some(semaphore) = map.get(&client_ip) {
-            return Some(semaphore.clone());
+        if let Some(entry) = map.get_mut(&client_ip) {
+            entry.last_used = tick;
+            return entry.semaphore.clone();
         }
 
         if map.len() >= MAX_CLIENT_SEMAPHORES {
-            let idle_ip = map
+            if let Some(lru_ip) = map
                 .iter()
-                .find(|(_, semaphore)| semaphore.available_permits() == max_per_client)
-                .map(|(ip, _)| *ip)?;
-            map.remove(&idle_ip);
+                .min_by_key(|(_, entry)| entry.last_used)
+                .map(|(ip, _)| *ip)
+            {
+                map.remove(&lru_ip);
+            }
         }
 
         let semaphore = Arc::new(Semaphore::new(max_per_client));
-        map.insert(client_ip, semaphore.clone());
-        Some(semaphore)
+        map.insert(
+            client_ip,
+            ClientSemaphoreEntry {
+                semaphore: semaphore.clone(),
+                last_used: tick,
+            },
+        );
+        semaphore
     }
 
     pub async fn new(
@@ -176,11 +252,31 @@ impl RecursiveDnsServer {
         global_node_ips: Vec<IpAddr>,
     ) -> RecursiveDnsResult<Self> {
         let resolver = Self::create_resolver(&config, &global_node_ips)?;
+        Ok(Self::with_resolver(
+            config,
+            resolver,
+            rate_limiter,
+            firewall,
+            metrics,
+        ))
+    }
+
+    /// Build a server around an already-constructed resolver.
+    ///
+    /// The resolver is a constructor input so a test (or a caller that owns a
+    /// different upstream strategy) can inject one without a real network.
+    pub fn with_resolver(
+        config: RecursiveRuntimeConfig,
+        resolver: Arc<dyn DnsResolver>,
+        rate_limiter: Option<Arc<DnsRateLimiter>>,
+        firewall: Option<Arc<RwLock<DnsFirewall>>>,
+        metrics: Option<Arc<DnsMetrics>>,
+    ) -> Self {
         let cache = RecursiveDnsCache::new(config.cache.capacity, &config.cache);
         let query_semaphore = Arc::new(Semaphore::new(config.max_concurrent_queries));
         let circuit_breaker = Arc::new(CircuitBreaker::new(&config.circuit_breaker));
 
-        Ok(Self {
+        Self {
             config,
             resolver,
             cache,
@@ -191,37 +287,50 @@ impl RecursiveDnsServer {
             running: Arc::new(tokio::sync::RwLock::new(false)),
             circuit_breaker,
             client_semaphores: Arc::new(parking_lot::Mutex::new(HashMap::new())),
-        })
+            refresh_in_flight: Arc::new(parking_lot::Mutex::new(HashSet::new())),
+        }
     }
 
     fn create_resolver(
         config: &RecursiveRuntimeConfig,
         global_node_ips: &[IpAddr],
     ) -> RecursiveDnsResult<Arc<dyn DnsResolver>> {
+        // Every branch either builds an explicit resolver or fails startup.
+        // There is no "empty list means the system resolver" path: that is what
+        // silently moved an operator's queries to a different server.
         let resolver: Arc<dyn DnsResolver> = match &config.upstream {
             RecursiveUpstreamRuntime::Recursive {
                 root_hints,
                 trust_anchor,
             } => {
                 tracing::info!(
-                    "Configuring true recursive resolver with root hints: {}, trust anchor: {}",
+                    "Configuring true recursive resolver with root hints: {}, static trust anchors: {}",
                     root_hints.display(),
                     trust_anchor.display()
                 );
                 Arc::new(
-                    HickoryRecursor::new(
-                        &root_hints.to_string_lossy(),
-                        &trust_anchor.to_string_lossy(),
+                    HickoryRecursor::from_paths(
+                        root_hints,
+                        trust_anchor,
                         config.dnssec_validation,
+                        RecursorLimits {
+                            recursion_limit: config.max_recursion_depth,
+                        },
                     )
                     .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
                 )
             }
             RecursiveUpstreamRuntime::GlobalNodes => {
-                tracing::info!(
-                    "Configuring GlobalNodes resolver with {} node IPs",
-                    global_node_ips.len()
-                );
+                if global_node_ips.is_empty() {
+                    return Err(RecursiveDnsError::UpstreamFailed(
+                        "upstream_provider = GlobalNodes requires at least one mesh global node; \
+                         refusing to fall back to the system resolver"
+                            .to_string(),
+                    ));
+                }
+                for ip in global_node_ips {
+                    tracing::info!("Recursive upstream: {}:{} (provider: GlobalNodes)", ip, 53);
+                }
                 Arc::new(
                     GlobalNodeResolver::new(global_node_ips.to_vec())
                         .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
@@ -232,6 +341,14 @@ impl RecursiveDnsServer {
                     "Using Google DNS as upstream provider - DNSSEC validation is NOT performed. \
                      Set upstream_provider='Recursive' to enable DNSSEC validation."
                 );
+                for ip in [
+                    "8.8.8.8",
+                    "8.8.4.4",
+                    "2001:4860:4860::8888",
+                    "2001:4860:4860::8844",
+                ] {
+                    tracing::info!("Recursive upstream: {}:53 (provider: Google)", ip);
+                }
                 Arc::new(
                     HickoryResolver::with_google(duration_secs(config.query_timeout))
                         .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
@@ -242,30 +359,66 @@ impl RecursiveDnsServer {
                     "Using Cloudflare DNS as upstream provider - DNSSEC validation is NOT performed. \
                      Set upstream_provider='Recursive' to enable DNSSEC validation."
                 );
+                for ip in [
+                    "1.1.1.1",
+                    "1.0.0.1",
+                    "2606:4700:4700::1111",
+                    "2606:4700:4700::1001",
+                ] {
+                    tracing::info!("Recursive upstream: {}:53 (provider: Cloudflare)", ip);
+                }
                 Arc::new(
                     HickoryResolver::with_cloudflare(duration_secs(config.query_timeout))
                         .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
                 )
             }
-            RecursiveUpstreamRuntime::System | RecursiveUpstreamRuntime::CustomEndpoints(_) => {
-                let upstream_ips = config.upstream_ips();
-                if upstream_ips.is_empty() {
+            RecursiveUpstreamRuntime::System => {
+                tracing::info!(
+                    "Recursive upstream: host resolver configuration (provider: System)"
+                );
+                Arc::new(
+                    HickoryResolver::from_system_config()
+                        .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
+                )
+            }
+            RecursiveUpstreamRuntime::CustomEndpoints(endpoints) => {
+                let mut upstreams = Vec::with_capacity(endpoints.len());
+                for endpoint in endpoints {
+                    match endpoint {
+                        super::runtime_config::CustomUpstreamEndpoint::Literal { ip, port } => {
+                            upstreams.push(UpstreamEndpoint::new(*ip, *port));
+                        }
+                        super::runtime_config::CustomUpstreamEndpoint::Hostname { host, port } => {
+                            return Err(RecursiveDnsError::UpstreamFailed(format!(
+                                "upstream '{host}:{port}' is a hostname with no resolved address; \
+                                 configure its IP address (a hostname-only upstream list is not \
+                                 silently replaced by the system resolver)"
+                            )));
+                        }
+                    }
+                }
+                if upstreams.is_empty() {
+                    return Err(RecursiveDnsError::UpstreamFailed(
+                        "upstream_provider = Custom requires at least one upstream address; \
+                         refusing to fall back to the system resolver"
+                            .to_string(),
+                    ));
+                }
+                for upstream in &upstreams {
+                    tracing::info!("Recursive upstream: {} (provider: Custom)", upstream);
+                }
+                if config.qname_minimization {
                     Arc::new(
-                        HickoryResolver::from_system_config()
-                            .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
-                    )
-                } else if config.qname_minimization {
-                    Arc::new(
-                        HickoryResolver::with_qname_minimization(
-                            &upstream_ips,
+                        HickoryResolver::with_qname_minimization_endpoints(
+                            &upstreams,
                             duration_secs(config.query_timeout),
                         )
                         .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
                     )
                 } else {
                     Arc::new(
-                        HickoryResolver::with_upstream_servers(
-                            &upstream_ips,
+                        HickoryResolver::with_upstream_endpoints(
+                            &upstreams,
                             duration_secs(config.query_timeout),
                         )
                         .map_err(|e| RecursiveDnsError::UpstreamFailed(e.to_string()))?,
@@ -389,6 +542,67 @@ impl RecursiveDnsServer {
         Ok(())
     }
 
+    /// The per-client concurrency slot, or `None` when the client already holds
+    /// its full allowance. Callers answer REFUSED rather than dropping.
+    async fn client_permit(&self, client_ip: IpAddr) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        let max_per_client = self.config.max_per_client_queries as usize;
+        if max_per_client == 0 {
+            return None;
+        }
+
+        let tick = next_client_tick();
+        let semaphore = self.client_semaphore(client_ip, max_per_client, tick);
+        match tokio::time::timeout(Duration::from_secs(1), semaphore.acquire_owned()).await {
+            Ok(Ok(permit)) => Some(permit),
+            _ => {
+                if let Some(metrics) = &self.metrics {
+                    metrics.record_rate_limited();
+                }
+                None
+            }
+        }
+    }
+
+    /// Client ACL, request rate limit, then firewall policy — in that order,
+    /// and always before the cache is consulted so a blocked qname is never
+    /// answered from a cached record.
+    fn client_policy(&self, packet: &[u8], client_addr: SocketAddr, transport: &str) -> bool {
+        if let Some(ref acl) = self.config.client_acl {
+            if !acl.is_client_allowed(client_addr.ip()) {
+                return false;
+            }
+        }
+
+        if let Some(ref limiter) = self.rate_limiter {
+            if limiter.check_ip(client_addr.ip()).is_err() {
+                if let Some(metrics) = &self.metrics {
+                    metrics.record_rate_limited();
+                }
+                return false;
+            }
+        }
+
+        if let Some(ref firewall) = self.firewall {
+            if let Ok(parsed_q) = ParsedDnsQuery::parse(packet) {
+                let fw = firewall.read();
+                // The qname argument is what a Domain rule matches; passing
+                // an empty string here made every qname rule a no-op.
+                if let Ok(decision) =
+                    fw.evaluate_query(&parsed_q, client_addr.ip(), &parsed_q.qname)
+                {
+                    if decision.action == crate::firewall::DnsFirewallAction::Block {
+                        if let Some(metrics) = &self.metrics {
+                            metrics.record_firewall_blocked(transport);
+                        }
+                        return false;
+                    }
+                }
+            }
+        }
+
+        true
+    }
+
     async fn handle_tcp_connection(
         &self,
         mut stream: TcpStream,
@@ -404,33 +618,12 @@ impl RecursiveDnsServer {
             metrics.record_recursive_query();
         }
 
-        let max_per_client = self.config.max_per_client_queries as usize;
-        let client_sem = if max_per_client > 0 {
-            Some(
-                self.client_semaphore(client_addr.ip(), max_per_client)
-                    .ok_or(RecursiveDnsError::RateLimited)?,
-            )
-        } else {
-            None
-        };
-
-        let _client_permit = if let Some(ref sem) = client_sem {
-            let permit = tokio::time::timeout(Duration::from_secs(1), sem.acquire())
-                .await
-                .map_err(|_| RecursiveDnsError::RateLimited)?
-                .map_err(|_| RecursiveDnsError::RateLimited)?;
-            Some(permit)
-        } else {
-            None
-        };
-
         let mut length_buf = [0u8; 2];
         stream.read_exact(&mut length_buf).await.map_err(|e| {
             RecursiveDnsError::UpstreamFailed(format!("Failed to read TCP length: {}", e))
         })?;
 
         let len = u16::from_be_bytes(length_buf) as usize;
-
         let mut query = vec![0u8; len];
         stream.read_exact(&mut query).await.map_err(|e| {
             RecursiveDnsError::UpstreamFailed(format!("Failed to read TCP query: {}", e))
@@ -440,90 +633,58 @@ impl RecursiveDnsServer {
             metrics.record_query_received();
         }
 
-        if let Some(ref acl) = self.config.client_acl {
-            if !acl.is_client_allowed(client_addr.ip()) {
-                if let Some(response) = build_error_response(&query, RCODE_REFUSED) {
-                    let len = response.len() as u16;
-                    let mut len_bytes = len.to_be_bytes().to_vec();
-                    len_bytes.extend_from_slice(&response);
-                    if let Err(e) = stream.write_all(&len_bytes).await {
-                        tracing::warn!("Failed to send REFUSED response: {}", e);
-                    }
-                }
-                return Err(RecursiveDnsError::FirewallBlocked);
+        let _client_permit = match self.client_permit(client_addr.ip()).await {
+            Some(permit) => Some(permit),
+            None if self.config.max_per_client_queries > 0 => {
+                self.write_tcp_rcode(&mut stream, &query, RCODE_REFUSED)
+                    .await;
+                return Ok(());
             }
+            None => None,
+        };
+
+        if !self.client_policy(&query, client_addr, "recursive_tcp") {
+            self.write_tcp_rcode(&mut stream, &query, RCODE_REFUSED)
+                .await;
+            return Ok(());
         }
 
-        if let Some(ref limiter) = self.rate_limiter {
-            if limiter.check_ip(client_addr.ip()).is_err() {
-                if let Some(metrics) = &self.metrics {
-                    metrics.record_rate_limited();
-                }
-                return Err(RecursiveDnsError::RateLimited);
-            }
-        }
-
-        if let Some(ref firewall) = self.firewall {
-            if let Ok(parsed_q) = ParsedDnsQuery::parse(&query) {
-                let fw = firewall.read();
-                if let Ok(decision) = fw.evaluate_query(&parsed_q, client_addr.ip(), "") {
-                    if decision.action == crate::firewall::DnsFirewallAction::Block {
-                        if let Some(metrics) = &self.metrics {
-                            metrics.record_firewall_blocked("recursive_tcp");
-                        }
-                        return Err(RecursiveDnsError::FirewallBlocked);
-                    }
-                }
-            }
-        }
-
-        let message_id = get_message_id(&query).unwrap_or(0);
+        let question = match question_parts(&query) {
+            Some(parts) => parts,
+            None => return Err(RecursiveDnsError::InvalidQuery),
+        };
 
         let parsed = match parse_dns_message(&query) {
             Ok(p) => p,
             Err(_) => return Err(RecursiveDnsError::InvalidQuery),
         };
 
-        if parsed.queries.is_empty() {
-            return Err(RecursiveDnsError::InvalidQuery);
-        }
-
-        let question = &parsed.queries[0];
-        let qname_str = question.name().to_string();
-        let qname_bytes = qname_str.as_bytes().to_vec();
-
-        let checking_disabled = parsed.metadata.checking_disabled;
-        let dnssec_ok = parsed.edns.as_ref().is_some_and(|e| e.flags().dnssec_ok);
-
-        let (response, _) = match self
-            .resolve_upstream(
-                &qname_bytes,
-                question.query_type(),
-                message_id,
-                checking_disabled,
-                dnssec_ok,
-            )
-            .await
-        {
-            Ok(r) => r,
+        let (response, _) = match self.resolve_query(&parsed, question.message_id).await {
+            Ok(response) => response,
             Err(e) => {
-                if let Some(servfail) = build_error_response(&query, RCODE_SERVFAIL) {
-                    let len = servfail.len() as u16;
-                    let mut len_bytes = len.to_be_bytes().to_vec();
-                    len_bytes.extend_from_slice(&servfail);
-                    if let Err(write_err) = stream.write_all(&len_bytes).await {
-                        tracing::warn!("Failed to send SERVFAIL response: {}", write_err);
-                    }
+                let servfail = self.build_rcode_response(
+                    question.message_id,
+                    &question.qname_wire,
+                    question.qtype,
+                    RCODE_SERVFAIL,
+                    question.checking_disabled,
+                    question.dnssec_ok,
+                );
+                let len = servfail.len() as u16;
+                let mut framed = len.to_be_bytes().to_vec();
+                framed.extend_from_slice(&servfail);
+                if let Err(write_err) = stream.write_all(&framed).await {
+                    tracing::warn!("Failed to send SERVFAIL response: {}", write_err);
                 }
                 return Err(e);
             }
         };
 
-        let authority_ns = self.collect_authority_ns(&qname_bytes).await;
-        if !validate_authority_bailiwick(&authority_ns, &qname_bytes) {
+        let authority_ns = self.collect_authority_ns(&question.qname).await;
+        if !validate_authority_bailiwick(&authority_ns, question.qname.as_bytes()) {
             warn!(
                 "Bailiwick violation: authority NS records not in-bailiwick for {}",
-                String::from_utf8_lossy(&qname_bytes)
+                question.qname
             );
             if let Some(metrics) = &self.metrics {
                 metrics.record_bailiwick_violation();
@@ -539,10 +700,31 @@ impl RecursiveDnsServer {
         })?;
 
         if let Some(metrics) = &self.metrics {
-            metrics.record_response_sent("NOERROR");
+            metrics.record_response_sent(rcode_name(&response));
         }
 
         Ok(())
+    }
+
+    /// Write one length-prefixed rcode response on a TCP stream.
+    async fn write_tcp_rcode(&self, stream: &mut TcpStream, query: &[u8], rcode: u8) {
+        let Some(question) = question_parts(query) else {
+            return;
+        };
+        let response = self.build_rcode_response(
+            question.message_id,
+            &question.qname_wire,
+            question.qtype,
+            rcode,
+            question.checking_disabled,
+            question.dnssec_ok,
+        );
+        let len = response.len() as u16;
+        let mut framed = len.to_be_bytes().to_vec();
+        framed.extend_from_slice(&response);
+        if let Err(e) = stream.write_all(&framed).await {
+            tracing::warn!("Failed to send rcode {} response: {}", rcode, e);
+        }
     }
 
     pub fn stop(&self) {
@@ -574,80 +756,6 @@ impl RecursiveDnsServer {
             metrics.record_recursive_query();
         }
 
-        let max_per_client = self.config.max_per_client_queries as usize;
-        if max_per_client > 0 {
-            let sem = self
-                .client_semaphore(client_addr.ip(), max_per_client)
-                .ok_or(RecursiveDnsError::RateLimited)?;
-            let _client_permit = tokio::time::timeout(Duration::from_secs(1), sem.acquire())
-                .await
-                .map_err(|_| RecursiveDnsError::RateLimited)?
-                .map_err(|_| RecursiveDnsError::RateLimited)?;
-
-            let query = match parse_dns_message(&packet) {
-                Ok(q) => q,
-                Err(_) => return Err(RecursiveDnsError::InvalidQuery),
-            };
-
-            if let Some(metrics) = &self.metrics {
-                metrics.record_query_received();
-            }
-
-            if let Some(ref acl) = self.config.client_acl {
-                if !acl.is_client_allowed(client_addr.ip()) {
-                    if let Some(response) = build_error_response(&packet, RCODE_REFUSED) {
-                        let _ = socket.send_to(&response, client_addr).await;
-                    }
-                    return Err(RecursiveDnsError::FirewallBlocked);
-                }
-            }
-
-            if let Some(ref limiter) = self.rate_limiter {
-                if limiter.check_ip(client_addr.ip()).is_err() {
-                    if let Some(metrics) = &self.metrics {
-                        metrics.record_rate_limited();
-                    }
-                    return Err(RecursiveDnsError::RateLimited);
-                }
-            }
-
-            if let Some(ref firewall) = self.firewall {
-                if let Ok(parsed_q) = ParsedDnsQuery::parse(&packet) {
-                    let fw = firewall.read();
-                    if let Ok(decision) = fw.evaluate_query(&parsed_q, client_addr.ip(), "") {
-                        if decision.action == crate::firewall::DnsFirewallAction::Block {
-                            if let Some(metrics) = &self.metrics {
-                                metrics.record_firewall_blocked("recursive");
-                            }
-                            return Err(RecursiveDnsError::FirewallBlocked);
-                        }
-                    }
-                }
-            }
-
-            let message_id = get_message_id(&packet).unwrap_or(0);
-            let response = match self.resolve_query(&query, message_id).await {
-                Ok(response) => response,
-                Err(e) => {
-                    if let Some(response) = build_error_response(&packet, RCODE_SERVFAIL) {
-                        let _ = socket.send_to(&response, client_addr).await;
-                    }
-                    return Err(e);
-                }
-            };
-
-            socket
-                .send_to(&response, client_addr)
-                .await
-                .map_err(|e| RecursiveDnsError::UpstreamFailed(format!("Send failed: {}", e)))?;
-
-            if let Some(metrics) = &self.metrics {
-                metrics.record_response_sent("NOERROR");
-            }
-
-            return Ok(());
-        }
-
         let query = match parse_dns_message(&packet) {
             Ok(q) => q,
             Err(_) => return Err(RecursiveDnsError::InvalidQuery),
@@ -657,45 +765,32 @@ impl RecursiveDnsServer {
             metrics.record_query_received();
         }
 
-        if let Some(ref acl) = self.config.client_acl {
-            if !acl.is_client_allowed(client_addr.ip()) {
-                if let Some(response) = build_error_response(&packet, RCODE_REFUSED) {
-                    let _ = socket.send_to(&response, client_addr).await;
-                }
-                return Err(RecursiveDnsError::FirewallBlocked);
+        let question = match question_parts(&packet) {
+            Some(parts) => parts,
+            None => return Err(RecursiveDnsError::InvalidQuery),
+        };
+
+        let _client_permit = match self.client_permit(client_addr.ip()).await {
+            Some(permit) => Some(permit),
+            None if self.config.max_per_client_queries > 0 => {
+                self.send_udp_rcode(&socket, client_addr, &question, RCODE_REFUSED)
+                    .await;
+                return Ok(());
             }
+            None => None,
+        };
+
+        if !self.client_policy(&packet, client_addr, "recursive") {
+            self.send_udp_rcode(&socket, client_addr, &question, RCODE_REFUSED)
+                .await;
+            return Ok(());
         }
 
-        if let Some(ref limiter) = self.rate_limiter {
-            if limiter.check_ip(client_addr.ip()).is_err() {
-                if let Some(metrics) = &self.metrics {
-                    metrics.record_rate_limited();
-                }
-                return Err(RecursiveDnsError::RateLimited);
-            }
-        }
-
-        if let Some(ref firewall) = self.firewall {
-            if let Ok(parsed_q) = ParsedDnsQuery::parse(&packet) {
-                let fw = firewall.read();
-                if let Ok(decision) = fw.evaluate_query(&parsed_q, client_addr.ip(), "") {
-                    if decision.action == crate::firewall::DnsFirewallAction::Block {
-                        if let Some(metrics) = &self.metrics {
-                            metrics.record_firewall_blocked("recursive");
-                        }
-                        return Err(RecursiveDnsError::FirewallBlocked);
-                    }
-                }
-            }
-        }
-
-        let message_id = get_message_id(&packet).unwrap_or(0);
-        let response = match self.resolve_query(&query, message_id).await {
+        let (response, _) = match self.resolve_query(&query, question.message_id).await {
             Ok(response) => response,
             Err(e) => {
-                if let Some(response) = build_error_response(&packet, RCODE_SERVFAIL) {
-                    let _ = socket.send_to(&response, client_addr).await;
-                }
+                self.send_udp_rcode(&socket, client_addr, &question, RCODE_SERVFAIL)
+                    .await;
                 return Err(e);
             }
         };
@@ -706,354 +801,483 @@ impl RecursiveDnsServer {
             .map_err(|e| RecursiveDnsError::UpstreamFailed(format!("Send failed: {}", e)))?;
 
         if let Some(metrics) = &self.metrics {
-            metrics.record_response_sent("NOERROR");
+            metrics.record_response_sent(rcode_name(&response));
         }
 
         Ok(())
     }
 
-    async fn resolve_query(&self, query: &Message, message_id: u16) -> RecursiveDnsResult<Vec<u8>> {
-        self.resolve_query_with_depth(query, message_id, 0).await
+    async fn send_udp_rcode(
+        &self,
+        socket: &UdpSocket,
+        client_addr: SocketAddr,
+        question: &QuestionParts,
+        rcode: u8,
+    ) {
+        let response = self.build_rcode_response(
+            question.message_id,
+            &question.qname_wire,
+            question.qtype,
+            rcode,
+            question.checking_disabled,
+            question.dnssec_ok,
+        );
+        let _ = socket.send_to(&response, client_addr).await;
     }
 
-    async fn resolve_query_with_depth(
+    async fn resolve_query(
         &self,
         query: &Message,
         message_id: u16,
-        recursion_depth: u8,
-    ) -> RecursiveDnsResult<Vec<u8>> {
+    ) -> RecursiveDnsResult<(Vec<u8>, DnssecValidationState)> {
         if query.queries.is_empty() {
             return Err(RecursiveDnsError::InvalidQuery);
         }
 
-        if self.config.max_recursion_depth > 0 && recursion_depth >= self.config.max_recursion_depth
-        {
-            return Err(RecursiveDnsError::DepthExceeded);
-        }
-
-        if self.config.max_cname_depth > 0 && recursion_depth >= self.config.max_cname_depth {
-            return Err(RecursiveDnsError::DepthExceeded);
-        }
-
         let question = &query.queries[0];
-        let qname_str = question.name().to_string();
-        let qname_bytes = qname_str.as_bytes().to_vec();
+        // Presentation form is only a resolver and cache input.
+        let qname = question.name().to_string();
+        // Parsed wire form of the question name: this is what the response
+        // echoes and what every cached owner name is built from.
+        let qname_wire = question
+            .name()
+            .to_bytes()
+            .map_err(|_| RecursiveDnsError::InvalidQuery)?;
         let qtype = question.query_type();
+        let qtype_u16: u16 = qtype.into();
 
         let checking_disabled = query.metadata.checking_disabled;
         let dnssec_ok = query.edns.as_ref().is_some_and(|e| e.flags().dnssec_ok);
 
         debug!("Recursive query for {} (type {:?})", question.name(), qtype);
 
-        let qtype_u16: u16 = qtype.into();
-        let cache_key =
-            RecursiveCacheKey::new_with_dnssec(&qname_bytes, qtype_u16, None, dnssec_ok);
+        // IN only, matching the authoritative admission gate. A CHAOS/HS query
+        // must not enter an IN cache under the same name and type.
+        if question.query_class() != hickory_proto::rr::DNSClass::IN {
+            return Ok((
+                self.build_rcode_response(
+                    message_id,
+                    &qname_wire,
+                    qtype_u16,
+                    RCODE_NOTIMP,
+                    checking_disabled,
+                    dnssec_ok,
+                ),
+                DnssecValidationState::Unchecked,
+            ));
+        }
 
-        if let Some((records, stale, validation_state)) = self.cache.get(&cache_key) {
-            if let Some(metrics) = &self.metrics {
-                metrics.record_recursive_cache_hit();
-                if stale {
+        // No ECS option is parsed from the request, so no subnet is forwarded
+        // and the key carries none. When forwarding lands, the subnet actually
+        // sent upstream is what belongs in the key.
+        let client_subnet = evaluate_ecs_forwarding_policy(&self.config.ecs.policy, &None)
+            .map(|subnet| subnet.address);
+        let cache_key = RecursiveCacheKey::with_flags(
+            qname.as_bytes(),
+            qtype_u16,
+            client_subnet,
+            dnssec_ok,
+            checking_disabled,
+        );
+
+        // ANY has no upstream lookup of its own: an ANY query is answered from
+        // data this resolver already holds, or with NOTIMP.
+        if qtype == RecordType::ANY {
+            return Ok(match self.cache.lookup(&cache_key) {
+                CacheLookup::Fresh(hit) => {
+                    if let Some(metrics) = &self.metrics {
+                        metrics.record_recursive_cache_hit();
+                        metrics.record_cache_hit();
+                    }
+                    let (response, state) = self.build_cached_answer(
+                        message_id,
+                        &qname_wire,
+                        qtype_u16,
+                        hit,
+                        checking_disabled,
+                        dnssec_ok,
+                    );
+                    (response, state)
+                }
+                CacheLookup::Stale(_) | CacheLookup::Miss => (
+                    self.build_rcode_response(
+                        message_id,
+                        &qname_wire,
+                        qtype_u16,
+                        RCODE_NOTIMP,
+                        checking_disabled,
+                        dnssec_ok,
+                    ),
+                    DnssecValidationState::Unchecked,
+                ),
+            });
+        }
+
+        match self.cache.lookup(&cache_key) {
+            CacheLookup::Fresh(hit) => {
+                if let Some(metrics) = &self.metrics {
+                    metrics.record_recursive_cache_hit();
                     metrics.record_cache_hit();
                 }
+                Ok(self.build_cached_answer(
+                    message_id,
+                    &qname_wire,
+                    qtype_u16,
+                    hit,
+                    checking_disabled,
+                    dnssec_ok,
+                ))
             }
-
-            let response = self.build_cached_response(
-                &qname_bytes,
-                question.query_type(),
-                records,
-                message_id,
-                validation_state,
-                checking_disabled,
-                dnssec_ok,
-            );
-            return Ok(response);
-        }
-
-        let (response, _validation_state) = self
-            .resolve_upstream(
-                &qname_bytes,
-                question.query_type(),
-                message_id,
-                checking_disabled,
-                dnssec_ok,
-            )
-            .await?;
-
-        let authority_ns = self.collect_authority_ns(&qname_bytes).await;
-        if !validate_authority_bailiwick(&authority_ns, &qname_bytes) {
-            warn!(
-                "Bailiwick violation: authority NS records not in-bailiwick for {}",
-                String::from_utf8_lossy(&qname_bytes)
-            );
-            if let Some(metrics) = &self.metrics {
-                metrics.record_bailiwick_violation();
+            CacheLookup::Stale(hit) => {
+                // RFC 8767 §3: expired data is a fallback, so the upstream is
+                // always tried first.
+                match self
+                    .resolve_and_cache(&qname, &qname_wire, qtype, checking_disabled, &cache_key)
+                    .await
+                {
+                    Ok(answer) => {
+                        if let Some(metrics) = &self.metrics {
+                            metrics.record_cache_miss();
+                            metrics.record_recursive_cache_miss();
+                        }
+                        Ok(self.build_answer_set(
+                            message_id,
+                            &qname_wire,
+                            qtype_u16,
+                            &answer,
+                            checking_disabled,
+                            dnssec_ok,
+                        ))
+                    }
+                    Err(error) => {
+                        if let Some(metrics) = &self.metrics {
+                            metrics.record_cache_stale_hit();
+                        }
+                        debug!(
+                            "Serving stale answer for {} after upstream failure: {}",
+                            qname, error
+                        );
+                        self.schedule_refresh(
+                            cache_key,
+                            qname,
+                            qname_wire.clone(),
+                            qtype,
+                            checking_disabled,
+                        );
+                        Ok(self.build_stale_answer(
+                            message_id,
+                            &qname_wire,
+                            qtype_u16,
+                            hit,
+                            checking_disabled,
+                            dnssec_ok,
+                        ))
+                    }
+                }
+            }
+            CacheLookup::Miss => {
+                if let Some(metrics) = &self.metrics {
+                    metrics.record_cache_miss();
+                    metrics.record_recursive_cache_miss();
+                }
+                match self
+                    .resolve_and_cache(&qname, &qname_wire, qtype, checking_disabled, &cache_key)
+                    .await
+                {
+                    Ok(answer) => Ok(self.build_answer_set(
+                        message_id,
+                        &qname_wire,
+                        qtype_u16,
+                        &answer,
+                        checking_disabled,
+                        dnssec_ok,
+                    )),
+                    Err(ResolveError::NotImplemented(record_type)) => {
+                        debug!(
+                            "Recursive resolver does not implement qtype {} for {}",
+                            record_type, qname
+                        );
+                        Ok((
+                            self.build_rcode_response(
+                                message_id,
+                                &qname_wire,
+                                qtype_u16,
+                                RCODE_NOTIMP,
+                                checking_disabled,
+                                dnssec_ok,
+                            ),
+                            DnssecValidationState::Unchecked,
+                        ))
+                    }
+                    Err(error) => Err(match error {
+                        ResolveError::DepthExceeded => RecursiveDnsError::DepthExceeded,
+                        ResolveError::CircuitBreakerOpen => RecursiveDnsError::CircuitBreakerOpen,
+                        other => RecursiveDnsError::UpstreamFailed(other.to_string()),
+                    }),
+                }
             }
         }
-
-        if let Some(metrics) = &self.metrics {
-            metrics.record_cache_miss();
-            metrics.record_recursive_cache_miss();
-        }
-
-        Ok(response)
     }
 
+    /// Resolve one query upstream and store it if it is cacheable.
+    ///
+    /// Only an `AnswerSet` reaches the cache: a `ResolveError` returns before
+    /// any insert, so a timeout or a validation failure can never be read back
+    /// as NODATA.
+    async fn resolve_and_cache(
+        &self,
+        qname: &str,
+        qname_wire: &[u8],
+        qtype: RecordType,
+        checking_disabled: bool,
+        cache_key: &RecursiveCacheKey,
+    ) -> Result<AnswerSet, ResolveError> {
+        let answer = self
+            .resolve_upstream(qname, qname_wire, qtype, checking_disabled)
+            .await?;
+        self.store_answer(cache_key, &answer);
+        Ok(answer)
+    }
+
+    fn store_answer(&self, cache_key: &RecursiveCacheKey, answer: &AnswerSet) {
+        if answer.is_negative() {
+            // Without an SOA there is no negative TTL to honour, so the answer
+            // is served but not cached (RFC 2308 §5).
+            let negative_ttl = answer.negative_ttl.unwrap_or(0);
+            self.cache.insert_negative(
+                cache_key.clone(),
+                answer.rcode == RCODE_NXDOMAIN,
+                negative_ttl,
+                answer.validation_state,
+            );
+            return;
+        }
+
+        let ttl = answer.records.iter().map(|r| r.ttl).min().unwrap_or(0);
+        self.cache.insert_positive(
+            cache_key.clone(),
+            answer.records.clone(),
+            ttl,
+            answer.validation_state,
+        );
+    }
+
+    /// Refresh an expired entry in the background after a stale answer.
+    fn schedule_refresh(
+        &self,
+        cache_key: RecursiveCacheKey,
+        qname: String,
+        qname_wire: Vec<u8>,
+        qtype: RecordType,
+        checking_disabled: bool,
+    ) {
+        {
+            let mut in_flight = self.refresh_in_flight.lock();
+            if !in_flight.insert(cache_key.clone()) {
+                // One refresh per entry: a stale-hit storm must not fan out
+                // into one upstream query per client.
+                return;
+            }
+        }
+
+        let server = self.clone();
+        let key = cache_key.clone();
+        tokio::spawn(async move {
+            let _ = server
+                .resolve_and_cache(&qname, &qname_wire, qtype, checking_disabled, &key)
+                .await;
+            server.refresh_in_flight.lock().remove(&key);
+        });
+    }
+
+    /// One upstream lookup. `dnssec_ok` is deliberately absent: the DO bit
+    /// decides which records the response may carry, not which records the
+    /// resolver asks for, and a validating recursor always requests DNSSEC data.
     async fn resolve_upstream(
         &self,
-        qname: &[u8],
+        qname: &str,
+        qname_wire: &[u8],
         qtype: RecordType,
-        message_id: u16,
         checking_disabled: bool,
-        dnssec_ok: bool,
-    ) -> RecursiveDnsResult<(Vec<u8>, DnssecValidationState)> {
+    ) -> Result<AnswerSet, ResolveError> {
         if self.circuit_breaker.is_open() {
             if let Some(metrics) = &self.metrics {
                 metrics.record_recursive_upstream_failure();
             }
-            return Err(RecursiveDnsError::CircuitBreakerOpen);
+            return Err(ResolveError::CircuitBreakerOpen);
+        }
+
+        let qtype_u16: u16 = qtype.into();
+        if !is_supported_qtype(qtype_u16) {
+            return Err(ResolveError::NotImplemented(qtype_u16));
         }
 
         if let Some(metrics) = &self.metrics {
             metrics.record_recursive_upstream_forward();
         }
 
-        let domain = String::from_utf8_lossy(qname).to_string();
-        let mut is_dnssec_validated = false;
-
-        let records = match qtype {
-            RecordType::A | RecordType::AAAA => {
-                match self.resolver.lookup_ip_with_ttl(&domain).await {
-                    Ok(ip_record) => {
-                        self.circuit_breaker.record_success();
-                        is_dnssec_validated = ip_record.is_dnssec_validated;
-                        let ttl = ip_record.ttl.unwrap_or(300);
-                        ip_record
-                            .addrs
-                            .into_iter()
-                            .filter_map(|ip| {
-                                let record_type: u16 = match ip {
-                                    std::net::IpAddr::V4(_) => 1,
-                                    std::net::IpAddr::V6(_) => 28,
-                                };
-                                if qtype == RecordType::AAAA && record_type != 28 {
-                                    return None;
-                                }
-                                if qtype == RecordType::A && record_type != 1 {
-                                    return None;
-                                }
-                                Some(CachedRecord {
-                                    name: qname.to_vec(),
-                                    record_type,
-                                    ttl,
-                                    data: match ip {
-                                        std::net::IpAddr::V4(v4) => v4.octets().to_vec(),
-                                        std::net::IpAddr::V6(v6) => v6.octets().to_vec(),
-                                    },
-                                })
-                            })
-                            .collect()
-                    }
-                    Err(_) => {
-                        self.circuit_breaker.record_failure();
-                        Vec::new()
-                    }
-                }
+        let rrset = match self.resolver.lookup_rrset(qname, qtype_u16).await {
+            Ok(rrset) => {
+                self.circuit_breaker.record_success();
+                rrset
             }
-            RecordType::TXT => match self.resolver.lookup_txt(&domain).await {
-                Ok(txt) => {
-                    self.circuit_breaker.record_success();
-                    txt.values
-                        .into_iter()
-                        .map(|v| CachedRecord {
-                            name: qname.to_vec(),
-                            record_type: 16,
-                            ttl: txt.ttl.unwrap_or(300),
-                            data: v.into_bytes(),
-                        })
-                        .collect()
+            Err(super::resolver::ResolverError::Unsupported(record_type)) => {
+                return Err(ResolveError::NotImplemented(record_type));
+            }
+            Err(super::resolver::ResolverError::Bogus(reason)) => {
+                self.circuit_breaker.record_failure();
+                if let Some(metrics) = &self.metrics {
+                    metrics.record_recursive_upstream_failure();
                 }
-                Err(_) => Vec::new(),
-            },
-            RecordType::NS => match self.resolver.lookup_ns(&domain).await {
-                Ok(ns) => {
-                    self.circuit_breaker.record_success();
-                    ns.nameservers
-                        .into_iter()
-                        .map(|ns_name| CachedRecord {
-                            name: qname.to_vec(),
-                            record_type: 2,
-                            ttl: ns.ttl.unwrap_or(300),
-                            data: ns_name.into_bytes(),
-                        })
-                        .collect()
+                return Err(ResolveError::Bogus(reason));
+            }
+            Err(error) => {
+                self.circuit_breaker.record_failure();
+                if let Some(metrics) = &self.metrics {
+                    metrics.record_recursive_upstream_failure();
                 }
-                Err(_) => Vec::new(),
-            },
-            RecordType::MX => match self.resolver.lookup_mx(&domain).await {
-                Ok(mx_records) => {
-                    self.circuit_breaker.record_success();
-                    mx_records
-                        .into_iter()
-                        .map(|mx: MxRecord| {
-                            let mut data = Vec::new();
-                            data.extend_from_slice(&mx.preference.to_be_bytes());
-                            data.extend_from_slice(mx.exchange.as_bytes());
-                            CachedRecord {
-                                name: qname.to_vec(),
-                                record_type: 15,
-                                ttl: mx.ttl.unwrap_or(300),
-                                data,
-                            }
-                        })
-                        .collect()
-                }
-                Err(_) => Vec::new(),
-            },
-            RecordType::CNAME => match self.resolver.lookup_cname(&domain).await {
-                Ok(Some(cname_record)) => {
-                    self.circuit_breaker.record_success();
-                    let cname_data = encode_domain_to_wire(&cname_record.cname);
-                    vec![CachedRecord {
-                        name: qname.to_vec(),
-                        record_type: 5,
-                        ttl: cname_record.ttl.unwrap_or(300),
-                        data: cname_data,
-                    }]
-                }
-                Ok(None) => Vec::new(),
-                Err(_) => Vec::new(),
-            },
-            RecordType::SOA => match self.resolver.lookup_soa(&domain).await {
-                Ok(Some(soa)) => {
-                    self.circuit_breaker.record_success();
-                    let ttl = soa.ttl.unwrap_or(300);
-                    let mut data = Vec::new();
-                    data.extend_from_slice(&encode_domain_to_wire(&soa.mname));
-                    data.extend_from_slice(&encode_domain_to_wire(&soa.rname));
-                    data.extend_from_slice(&soa.serial.to_be_bytes());
-                    data.extend_from_slice(&soa.refresh.to_be_bytes());
-                    data.extend_from_slice(&soa.retry.to_be_bytes());
-                    data.extend_from_slice(&soa.expire.to_be_bytes());
-                    data.extend_from_slice(&soa.minimum.to_be_bytes());
-                    vec![CachedRecord {
-                        name: qname.to_vec(),
-                        record_type: 6,
-                        ttl,
-                        data,
-                    }]
-                }
-                Ok(None) => Vec::new(),
-                Err(_) => Vec::new(),
-            },
-            RecordType::PTR => match self.resolver.lookup_ptr(&domain).await {
-                Ok(Some(ptr)) => {
-                    self.circuit_breaker.record_success();
-                    let ttl = ptr.ttl.unwrap_or(300);
-                    let data = encode_domain_to_wire(&ptr.domain);
-                    vec![CachedRecord {
-                        name: qname.to_vec(),
-                        record_type: 12,
-                        ttl,
-                        data,
-                    }]
-                }
-                Ok(None) => Vec::new(),
-                Err(_) => Vec::new(),
-            },
-            RecordType::SRV => match self.resolver.lookup_srv(&domain).await {
-                Ok(srv_records) => {
-                    self.circuit_breaker.record_success();
-                    srv_records
-                        .into_iter()
-                        .map(|srv: SrvRecord| {
-                            let mut data = Vec::new();
-                            data.extend_from_slice(&srv.priority.to_be_bytes());
-                            data.extend_from_slice(&srv.weight.to_be_bytes());
-                            data.extend_from_slice(&srv.port.to_be_bytes());
-                            data.extend_from_slice(&encode_domain_to_wire(&srv.target));
-                            CachedRecord {
-                                name: qname.to_vec(),
-                                record_type: 33,
-                                ttl: srv.ttl.unwrap_or(300),
-                                data,
-                            }
-                        })
-                        .collect()
-                }
-                Err(_) => Vec::new(),
-            },
-            _ => Vec::new(),
+                return Err(ResolveError::Upstream(error.to_string()));
+            }
         };
 
-        let qtype_u16: u16 = qtype.into();
+        let records: Vec<CachedRecord> = rrset
+            .records
+            .iter()
+            .filter_map(|record| cached_record(qname_wire, record))
+            .collect();
 
-        let effective_dnssec_validated = if checking_disabled {
-            false
-        } else {
-            is_dnssec_validated
-        };
+        // A recursive answer may carry aliases; the configured cap applies to
+        // the chain the client would have to follow.
+        let aliases = records.iter().filter(|r| r.record_type == 5).count();
+        if self.config.max_cname_depth > 0 && aliases > usize::from(self.config.max_cname_depth) {
+            return Err(ResolveError::DepthExceeded);
+        }
 
         let validation_state = to_validation_state(
-            effective_dnssec_validated,
+            rrset.is_dnssec_validated,
             checking_disabled,
             !self.config.dnssec_validation,
         );
 
-        if records.is_empty() {
-            let cache_key = RecursiveCacheKey::new_with_dnssec(qname, qtype_u16, None, dnssec_ok);
-            self.cache.insert_negative(
-                cache_key,
-                true,
-                u32::try_from(self.config.cache.negative_ttl.as_secs()).unwrap_or(u32::MAX),
-                validation_state,
-            );
+        Ok(AnswerSet {
+            records,
+            rcode: rrset.rcode,
+            negative_ttl: rrset.negative_ttl,
+            validation_state,
+        })
+    }
 
-            let flags = crate::wire::MessageFlags {
-                is_response: true,
-                opcode: 0,
-                authoritative: false,
-                truncated: false,
-                recursion_desired: true,
-                recursion_available: true,
-                authentic_data: effective_dnssec_validated && dnssec_ok,
-                checking_disabled,
-                response_code: 0,
-            };
-
-            let question_section = self.build_question_section(qname, qtype_u16);
-            let header = build_response_header(message_id, flags, 1, 0, 0, 0);
-
-            let mut response = header;
-            response.extend_from_slice(&question_section);
-            return Ok((response, validation_state));
-        }
-
-        let cache_key = RecursiveCacheKey::new_with_dnssec(qname, qtype_u16, None, dnssec_ok);
-        let min_ttl = records.iter().map(|r| r.ttl).min().unwrap_or(300);
-        self.cache
-            .insert_positive(cache_key, records.clone(), min_ttl, validation_state);
-
-        Ok((
-            self.build_cached_response(
-                qname,
-                qtype,
-                records,
+    fn build_answer_set(
+        &self,
+        message_id: u16,
+        qname_wire: &[u8],
+        qtype_u16: u16,
+        answer: &AnswerSet,
+        checking_disabled: bool,
+        dnssec_ok: bool,
+    ) -> (Vec<u8>, DnssecValidationState) {
+        (
+            self.build_response(
                 message_id,
-                validation_state,
+                qname_wire,
+                qtype_u16,
+                answer.records.clone(),
+                answer.rcode,
+                answer.validation_state,
                 checking_disabled,
                 dnssec_ok,
             ),
-            validation_state,
-        ))
+            answer.validation_state,
+        )
+    }
+
+    fn build_cached_answer(
+        &self,
+        message_id: u16,
+        qname_wire: &[u8],
+        qtype_u16: u16,
+        hit: CacheHit,
+        checking_disabled: bool,
+        dnssec_ok: bool,
+    ) -> (Vec<u8>, DnssecValidationState) {
+        (
+            self.build_response(
+                message_id,
+                qname_wire,
+                qtype_u16,
+                hit.records,
+                hit.rcode,
+                hit.validation_state,
+                checking_disabled,
+                dnssec_ok,
+            ),
+            hit.validation_state,
+        )
+    }
+
+    /// Build the stale answer: the cached records with the RFC 8767 TTL.
+    fn build_stale_answer(
+        &self,
+        message_id: u16,
+        qname_wire: &[u8],
+        qtype_u16: u16,
+        hit: CacheHit,
+        checking_disabled: bool,
+        dnssec_ok: bool,
+    ) -> (Vec<u8>, DnssecValidationState) {
+        let records = hit
+            .records
+            .into_iter()
+            .map(|record| CachedRecord {
+                ttl: STALE_SERVE_TTL,
+                ..record
+            })
+            .collect();
+        (
+            self.build_response(
+                message_id,
+                qname_wire,
+                qtype_u16,
+                records,
+                hit.rcode,
+                hit.validation_state,
+                checking_disabled,
+                dnssec_ok,
+            ),
+            hit.validation_state,
+        )
+    }
+
+    /// Build a header + question + rcode response with no answer records.
+    fn build_rcode_response(
+        &self,
+        message_id: u16,
+        qname_wire: &[u8],
+        qtype_u16: u16,
+        rcode: u8,
+        checking_disabled: bool,
+        dnssec_ok: bool,
+    ) -> Vec<u8> {
+        self.build_response(
+            message_id,
+            qname_wire,
+            qtype_u16,
+            Vec::new(),
+            rcode,
+            DnssecValidationState::Unchecked,
+            checking_disabled,
+            dnssec_ok,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn build_cached_response(
+    fn build_response(
         &self,
-        qname: &[u8],
-        qtype: RecordType,
-        records: Vec<CachedRecord>,
         message_id: u16,
+        qname_wire: &[u8],
+        qtype_u16: u16,
+        records: Vec<CachedRecord>,
+        rcode: u8,
         validation_state: DnssecValidationState,
         checking_disabled: bool,
         dnssec_ok: bool,
@@ -1061,27 +1285,33 @@ impl RecursiveDnsServer {
         let effective_dnssec_validated =
             validation_state == DnssecValidationState::Secure && !checking_disabled;
         let ad_bit = effective_dnssec_validated && dnssec_ok;
-        let qtype_u16: u16 = qtype.into();
 
         let qdcount = 1u16;
         let ancount = records.len() as u16;
 
-        let mut response = Vec::new();
+        let question_section = self.build_question_section(qname_wire, qtype_u16);
 
-        let question_section = self.build_question_section(qname, qtype_u16);
-        response.extend_from_slice(&question_section);
-
-        let mut answer_sections = Vec::new();
+        let mut answer_sections = Vec::with_capacity(records.len());
         for record in &records {
-            let answer_section = self.build_answer_record(record);
-            answer_sections.push(answer_section);
+            answer_sections.push(self.build_answer_record(record));
         }
 
         let header_size = 12;
         let question_size = question_section.len();
         let answer_size = answer_sections.iter().map(|s| s.len()).sum::<usize>();
-
         let total_size = header_size + question_size + answer_size;
+
+        let flags_for = |truncated: bool| crate::wire::MessageFlags {
+            is_response: true,
+            opcode: 0,
+            authoritative: false,
+            truncated,
+            recursion_desired: true,
+            recursion_available: true,
+            authentic_data: ad_bit,
+            checking_disabled,
+            response_code: rcode,
+        };
 
         if total_size > 512 {
             let max_answer_size = 512 - header_size - question_size;
@@ -1100,59 +1330,42 @@ impl RecursiveDnsServer {
                 }
             }
 
-            let flags = crate::wire::MessageFlags {
-                is_response: true,
-                opcode: 0,
-                authoritative: false,
-                truncated: true,
-                recursion_desired: true,
-                recursion_available: true,
-                authentic_data: ad_bit,
-                checking_disabled,
-                response_code: 0,
-            };
-
-            let header = build_response_header(message_id, flags, qdcount, truncated_ancount, 0, 0);
-
-            let mut full_response = header;
+            let mut full_response = build_response_header(
+                message_id,
+                flags_for(true),
+                qdcount,
+                truncated_ancount,
+                0,
+                0,
+            );
             full_response.extend_from_slice(&question_section);
             full_response.extend_from_slice(&final_response);
-
-            response = full_response;
-        } else {
-            let flags = crate::wire::MessageFlags {
-                is_response: true,
-                opcode: 0,
-                authoritative: false,
-                truncated: false,
-                recursion_desired: true,
-                recursion_available: true,
-                authentic_data: ad_bit,
-                checking_disabled,
-                response_code: 0,
-            };
-
-            let header = build_response_header(message_id, flags, qdcount, ancount, 0, 0);
-
-            let mut final_response = header;
-            final_response.extend_from_slice(&question_section);
-            for answer in answer_sections {
-                final_response.extend_from_slice(&answer);
-            }
-
-            response = final_response;
+            return full_response;
         }
 
-        response
+        let mut final_response =
+            build_response_header(message_id, flags_for(false), qdcount, ancount, 0, 0);
+        final_response.extend_from_slice(&question_section);
+        for answer in answer_sections {
+            final_response.extend_from_slice(&answer);
+        }
+
+        final_response
     }
 
-    fn build_question_section(&self, qname: &[u8], qtype: u16) -> Vec<u8> {
-        let mut section = Vec::new();
+    /// Build the question section from an **encoded** wire name.
+    ///
+    /// `qname_wire` is `wire::encode_owner(relative, origin)` (or the parsed
+    /// request name re-emitted as wire bytes). Appending the presentation-form
+    /// string here made the first label length read the ASCII `'e'` of
+    /// `example.com`, so no client could parse the response.
+    fn build_question_section(&self, qname_wire: &[u8], qtype: u16) -> Vec<u8> {
+        let mut section = Vec::with_capacity(qname_wire.len() + 5);
 
-        if qname.is_empty() || qname == b"." {
+        if qname_wire.is_empty() {
             section.push(0);
         } else {
-            section.extend_from_slice(qname);
+            section.extend_from_slice(qname_wire);
             if !section.ends_with(&[0]) {
                 section.push(0);
             }
@@ -1164,10 +1377,11 @@ impl RecursiveDnsServer {
         section
     }
 
+    /// Build an answer record. `record.name` must already be wire bytes.
     fn build_answer_record(&self, record: &CachedRecord) -> Vec<u8> {
         let mut section = Vec::new();
 
-        if record.name.is_empty() || record.name == b"." {
+        if record.name.is_empty() {
             section.push(0);
         } else {
             section.extend_from_slice(&record.name);
@@ -1185,9 +1399,8 @@ impl RecursiveDnsServer {
         section
     }
 
-    async fn collect_authority_ns(&self, qname: &[u8]) -> Vec<String> {
-        let domain = String::from_utf8_lossy(qname).to_string();
-        if let Ok(ns) = self.resolver.lookup_ns(&domain).await {
+    async fn collect_authority_ns(&self, qname: &str) -> Vec<String> {
+        if let Ok(ns) = self.resolver.lookup_ns(qname).await {
             ns.nameservers
         } else {
             Vec::new()
@@ -1216,7 +1429,188 @@ impl Clone for RecursiveDnsServer {
             running: self.running.clone(),
             circuit_breaker: self.circuit_breaker.clone(),
             client_semaphores: self.client_semaphores.clone(),
+            refresh_in_flight: self.refresh_in_flight.clone(),
         }
+    }
+}
+
+/// The question fields a response needs, read straight from the packet.
+struct QuestionParts {
+    message_id: u16,
+    /// Presentation form, for the resolver and the bailiwick check.
+    qname: String,
+    /// Parsed wire form, for the echoed question and every cached owner.
+    qname_wire: Vec<u8>,
+    qtype: u16,
+    checking_disabled: bool,
+    dnssec_ok: bool,
+}
+
+fn question_parts(packet: &[u8]) -> Option<QuestionParts> {
+    let message = parse_dns_message(packet).ok()?;
+    let question = message.queries.first()?;
+    Some(QuestionParts {
+        message_id: get_message_id(packet).unwrap_or(0),
+        qname: question.name().to_string(),
+        qname_wire: question.name().to_bytes().ok()?,
+        qtype: question.query_type().into(),
+        checking_disabled: message.metadata.checking_disabled,
+        dnssec_ok: message.edns.as_ref().is_some_and(|e| e.flags().dnssec_ok),
+    })
+}
+
+static CLIENT_TICK: AtomicU64 = AtomicU64::new(0);
+
+fn next_client_tick() -> u64 {
+    CLIENT_TICK.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Record types the recursive resolver answers with a real upstream lookup.
+///
+/// Everything else is NOTIMP: answering an unimplemented type with an empty
+/// NOERROR would tell a client "no such data" when the resolver never asked.
+fn is_supported_qtype(record_type: u16) -> bool {
+    matches!(
+        record_type,
+        1     // A
+        | 2   // NS
+        | 5   // CNAME
+        | 6   // SOA
+        | 12  // PTR
+        | 15  // MX
+        | 16  // TXT
+        | 28  // AAAA
+        | 33  // SRV
+        | 35  // NAPTR
+        | 43  // DS
+        | 48 // DNSKEY
+    )
+}
+
+/// Encode one resolved record as a cache entry.
+///
+/// The owner is the queried name in wire form and every name inside RDATA is
+/// encoded by the same owner encoder, so no field of the answer can be
+/// presentation ASCII.
+fn cached_record(qname_wire: &[u8], record: &ResolvedRecord) -> Option<CachedRecord> {
+    let (record_type, ttl, data) = match record {
+        ResolvedRecord::Address { ip, ttl } => match ip {
+            IpAddr::V4(v4) => (1u16, *ttl, v4.octets().to_vec()),
+            IpAddr::V6(v6) => (28u16, *ttl, v6.octets().to_vec()),
+        },
+        ResolvedRecord::Cname { target, ttl } => (5, *ttl, encode_domain_to_wire(target)),
+        ResolvedRecord::Ns { target, ttl } => (2, *ttl, encode_domain_to_wire(target)),
+        ResolvedRecord::Mx {
+            exchange,
+            preference,
+            ttl,
+        } => {
+            let mut data = Vec::new();
+            data.extend_from_slice(&preference.to_be_bytes());
+            data.extend_from_slice(&encode_domain_to_wire(exchange));
+            (15, *ttl, data)
+        }
+        ResolvedRecord::Txt { value, ttl } => (16, *ttl, encode_character_strings(value)),
+        ResolvedRecord::Soa {
+            mname,
+            rname,
+            serial,
+            refresh,
+            retry,
+            expire,
+            minimum,
+            ttl,
+        } => {
+            let mut data = Vec::new();
+            data.extend_from_slice(&encode_domain_to_wire(mname));
+            data.extend_from_slice(&encode_domain_to_wire(rname));
+            data.extend_from_slice(&serial.to_be_bytes());
+            data.extend_from_slice(&(*refresh as u32).to_be_bytes());
+            data.extend_from_slice(&(*retry as u32).to_be_bytes());
+            data.extend_from_slice(&(*expire as u32).to_be_bytes());
+            data.extend_from_slice(&minimum.to_be_bytes());
+            (6, *ttl, data)
+        }
+        ResolvedRecord::Ptr { target, ttl } => (12, *ttl, encode_domain_to_wire(target)),
+        ResolvedRecord::Srv {
+            priority,
+            weight,
+            port,
+            target,
+            ttl,
+        } => {
+            let mut data = Vec::new();
+            data.extend_from_slice(&priority.to_be_bytes());
+            data.extend_from_slice(&weight.to_be_bytes());
+            data.extend_from_slice(&port.to_be_bytes());
+            data.extend_from_slice(&encode_domain_to_wire(target));
+            (33, *ttl, data)
+        }
+        ResolvedRecord::Naptr {
+            order,
+            preference,
+            flags,
+            service,
+            regexp,
+            replacement,
+            ttl,
+        } => {
+            let mut data = Vec::new();
+            data.extend_from_slice(&order.to_be_bytes());
+            data.extend_from_slice(&preference.to_be_bytes());
+            data.extend_from_slice(&encode_character_string(flags));
+            data.extend_from_slice(&encode_character_string(service));
+            data.extend_from_slice(&encode_character_string(regexp));
+            data.extend_from_slice(&encode_domain_to_wire(replacement));
+            (35, *ttl, data)
+        }
+        ResolvedRecord::Ds {
+            key_tag,
+            algorithm,
+            digest_type,
+            digest,
+            ttl,
+        } => {
+            let mut data = Vec::new();
+            data.extend_from_slice(&key_tag.to_be_bytes());
+            data.push(*algorithm);
+            data.push(*digest_type);
+            data.extend_from_slice(digest);
+            (43, *ttl, data)
+        }
+        ResolvedRecord::Dnskey {
+            flags,
+            protocol,
+            algorithm,
+            public_key,
+            ttl,
+        } => {
+            let mut data = Vec::new();
+            data.extend_from_slice(&flags.to_be_bytes());
+            data.push(*protocol);
+            data.push(*algorithm);
+            data.extend_from_slice(public_key);
+            (48, *ttl, data)
+        }
+    };
+
+    Some(CachedRecord {
+        name: qname_wire.to_vec(),
+        record_type,
+        ttl,
+        data,
+    })
+}
+
+/// The metric label for a response: its rcode name.
+fn rcode_name(response: &[u8]) -> &'static str {
+    match response.get(3).map(|byte| byte & 0x0F) {
+        Some(RCODE_NOERROR) => "NOERROR",
+        Some(RCODE_NXDOMAIN) => "NXDOMAIN",
+        Some(RCODE_NOTIMP) => "NOTIMP",
+        Some(RCODE_REFUSED) => "REFUSED",
+        Some(RCODE_SERVFAIL) => "SERVFAIL",
+        _ => "NOERROR",
     }
 }
 
@@ -1234,24 +1628,53 @@ fn to_validation_state(
     }
 }
 
-/// Encode a dotted domain name to DNS wire format (length-prefixed labels, null-terminated).
+/// Encode a dotted domain name to DNS wire format (length-prefixed labels,
+/// null-terminated).
+///
+/// Delegates to the campaign's single owner encoder so an RDATA name cannot be
+/// written with a different set of rules than an owner name. A name the encoder
+/// rejects (an upstream sent something malformed) becomes the root rather than
+/// a partially-encoded name; the caller never emits an unparseable RDATA field.
 fn encode_domain_to_wire(domain: &str) -> Vec<u8> {
-    let mut result = Vec::new();
-    let domain = domain.trim_end_matches('.');
-    if domain.is_empty() {
-        result.push(0);
-        return result;
-    }
-    for label in domain.split('.') {
-        if label.is_empty() {
-            continue;
+    match crate::wire::encode_name(domain) {
+        Ok(encoded) => encoded,
+        Err(err) => {
+            warn!("Refusing to encode malformed RDATA name {domain:?}: {err}");
+            vec![0]
         }
-        let len = label.len() as u8;
-        result.push(len);
-        result.extend_from_slice(label.as_bytes());
     }
-    result.push(0);
-    result
+}
+
+/// Encode one DNS character-string: a length octet followed by the bytes.
+///
+/// NAPTR carries three single character-strings (RFC 3403 §4.1), so a value
+/// longer than 255 octets is malformed and is truncated rather than split —
+/// splitting would turn one field into several and shift every field after it.
+fn encode_character_string(value: &[u8]) -> Vec<u8> {
+    let len = value.len().min(255);
+    let mut encoded = Vec::with_capacity(len + 1);
+    encoded.push(len as u8);
+    encoded.extend_from_slice(&value[..len]);
+    encoded
+}
+
+/// Encode a TXT value as one or more DNS character-strings (RFC 1035 §3.3.14).
+///
+/// Each character-string carries its own length octet and is at most 255
+/// octets; a longer value is split, exactly as the authoritative encoder does.
+/// Writing the raw bytes (the old behavior) made the first value byte look like
+/// a length, so the RDATA did not parse.
+fn encode_character_strings(value: &str) -> Vec<u8> {
+    let bytes = value.as_bytes();
+    if bytes.is_empty() {
+        return vec![0];
+    }
+    let mut encoded = Vec::with_capacity(bytes.len() + bytes.len() / 255 + 2);
+    for chunk in bytes.chunks(255) {
+        encoded.push(chunk.len() as u8);
+        encoded.extend_from_slice(chunk);
+    }
+    encoded
 }
 
 pub fn is_in_bailiwick(name: &[u8], zone_origin: &[u8]) -> bool {
@@ -1560,33 +1983,144 @@ mod tests {
     fn test_build_question_section() {
         let server = create_mock_server();
 
-        let section = server.build_question_section(b"example.com", 1);
+        let name = crate::wire::encode_owner("www", "example.com").unwrap();
+        let section = server.build_question_section(&name, 1);
 
-        assert!(!section.is_empty());
-        assert!(section.ends_with(&[0, 1]));
-        assert!(section.len() >= 6);
+        // Byte-identical to the owner encoder: the question section is the
+        // encoded name followed by QTYPE/QCLASS, never presentation ASCII.
+        assert_eq!(
+            &section[..name.len()],
+            &crate::wire::encode_owner("www.example.com", "").unwrap()[..]
+        );
+        assert_eq!(&section[name.len()..], &[0x00, 0x01, 0x00, 0x01]);
+        assert_eq!(
+            crate::wire::parse_query_name(&section, 0).as_deref(),
+            Some("www.example.com")
+        );
     }
 
     #[test]
     fn test_build_question_section_root() {
         let server = create_mock_server();
 
-        let section = server.build_question_section(b".", 1);
+        let section = server.build_question_section(&[0u8], 1);
 
         assert_eq!(section, vec![0, 0, 1, 0, 1]);
+    }
+
+    /// RDATA name fields are wire names, not presentation strings. Before this
+    /// was fixed an NS or MX answer carried `ns1.example.com` as ASCII, so the
+    /// first byte (`'n'` = 110) was read as a length.
+    #[test]
+    fn test_rdata_domain_names_are_wire_encoded() {
+        let encoded = encode_domain_to_wire("ns1.example.com");
+        assert_eq!(
+            crate::wire::parse_query_name(&encoded, 0).as_deref(),
+            Some("ns1.example.com")
+        );
+        // A malformed name must not produce a partially encoded field.
+        assert_eq!(encode_domain_to_wire("bad..name"), vec![0]);
+    }
+
+    /// TXT is a sequence of length-prefixed character-strings. Writing the raw
+    /// bytes made the first value byte look like a length.
+    #[test]
+    fn test_txt_rdata_is_length_prefixed() {
+        assert_eq!(encode_character_strings("hello"), b"\x05hello".to_vec());
+        assert_eq!(encode_character_strings(""), vec![0]);
+
+        let long = "a".repeat(300);
+        let encoded = encode_character_strings(&long);
+        assert_eq!(encoded[0], 255);
+        assert_eq!(encoded[256], 45);
+        assert_eq!(encoded.len(), 2 + 300);
     }
 
     #[test]
     fn test_build_answer_record() {
         let server = create_mock_server();
 
-        let record = create_test_record(b"example.com", 1, 300, vec![93, 184, 216, 34]);
+        let name = crate::wire::encode_owner("www.example.com", "").unwrap();
+        let record = create_test_record(&name, 1, 300, vec![93, 184, 216, 34]);
         let section = server.build_answer_record(&record);
+
+        assert_eq!(
+            crate::wire::parse_query_name(&section, 0).as_deref(),
+            Some("www.example.com"),
+            "answer owner must decode as a wire name"
+        );
 
         assert!(section.len() > 20);
         let section_slice = &section[section.len() - 6..];
         let rdlen = u16::from_be_bytes([section_slice[0], section_slice[1]]);
         assert_eq!(rdlen, 4);
+    }
+
+    /// The wire name taken from a parsed request is exactly what
+    /// `wire::encode_owner` produces, so the value stored in
+    /// `CachedRecord.name` and echoed as the question are the same bytes.
+    #[test]
+    fn test_parsed_question_name_matches_owner_encoder() {
+        let mut query = Vec::new();
+        query.extend_from_slice(&0x1234u16.to_be_bytes());
+        query.extend_from_slice(&0x0100u16.to_be_bytes()); // RD
+        query.extend_from_slice(&1u16.to_be_bytes());
+        query.extend_from_slice(&0u16.to_be_bytes());
+        query.extend_from_slice(&0u16.to_be_bytes());
+        query.extend_from_slice(&0u16.to_be_bytes());
+        query.extend_from_slice(&crate::wire::encode_owner("WwW", "example.com").unwrap());
+        query.extend_from_slice(&1u16.to_be_bytes()); // A
+        query.extend_from_slice(&1u16.to_be_bytes()); // IN
+
+        let message = parse_dns_message(&query).expect("query must parse");
+        let wire = message.queries[0]
+            .name()
+            .to_bytes()
+            .expect("parsed name must emit as wire bytes");
+
+        // Case and labels survive: no presentation-form round trip.
+        assert_eq!(
+            wire,
+            crate::wire::encode_owner("WwW.example.com", "").unwrap()
+        );
+        assert_eq!(
+            crate::wire::parse_query_name(&wire, 0).as_deref(),
+            Some("WwW.example.com")
+        );
+    }
+
+    /// Explicit invariant on the cache-insert path: `CachedRecord.name` holds an
+    /// encoded, absolute wire name (terminating root label, <= 255 octets), not
+    /// the dotted presentation form.
+    #[test]
+    fn test_cached_record_name_is_encoded_wire_name() {
+        for (relative, expected) in [
+            ("www", "www.example.com"),
+            ("a.b", "a.b.example.com"),
+            ("@", "example.com"),
+        ] {
+            let name = crate::wire::encode_owner(relative, "example.com").unwrap();
+
+            assert_eq!(
+                name.last(),
+                Some(&0u8),
+                "CachedRecord.name must be root-terminated: {relative:?}"
+            );
+            assert!(
+                name.len() <= 255,
+                "CachedRecord.name must fit the 255-octet name limit"
+            );
+            assert_ne!(
+                name,
+                relative.as_bytes().to_vec(),
+                "CachedRecord.name must not hold presentation ASCII"
+            );
+            assert_eq!(
+                crate::wire::parse_query_name(&name, 0).as_deref(),
+                Some(expected),
+                "CachedRecord.name must decode back to the queried FQDN"
+            );
+        }
     }
 
     #[test]
@@ -1686,6 +2220,7 @@ mod tests {
                 &crate::runtime_config::test_fixtures::circuit_breaker_runtime(),
             )),
             client_semaphores: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            refresh_in_flight: Arc::new(parking_lot::Mutex::new(HashSet::new())),
         }
     }
 }

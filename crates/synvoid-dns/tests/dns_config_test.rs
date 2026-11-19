@@ -177,6 +177,11 @@ mod dns_config_tests {
         assert!(flags.authentic_data);
     }
 
+    /// Decision T5: trust anchors are a static file read at startup.
+    ///
+    /// `load_static_trust_anchors` is the only loader left; the RFC 5011
+    /// observation/promotion state machine that used to wrap it is deleted, so
+    /// the assertion is that a file holding a root KSK parses into anchors.
     #[test]
     fn test_dnssec_trust_anchor_loading() {
         use std::fs;
@@ -186,90 +191,20 @@ mod dns_config_tests {
         let temp_dir = TempDir::new().unwrap();
         let anchor_path = temp_dir.path().join("trusted-key.key");
 
-        let anchor_content = r#"
-; Trust Anchor for Root Zone DNSSEC
-. 86400 IN DNSKEY 257 3 8 (
-    AwEAAaz/tAm8yTn4Mfeh5eyI96WSVexTBAvkMgJzkKTOiW1vkIbzxeF3
-    +/4RgWOq7HrxRixHlFlExOLAJr5emLvN7SWXgnLh4+B5xQlNVz8Og8kv
-    ArMtNROxVQuCaSnIDdD5LKyWbRd2n9WGe2R8PzgCmr3EgVLrjyBxWezF
-    0jLHwVN8efS3rCj/EWgvIWgb9tarpVUDK/b58Da+sqqls3eNbuv7pr+e
-    oZG+SrDK6nWeL3c6H5Apxz7LjVc1uTIdsIXxuOLYA4/ilBmSVIzuDWfd
-    RUfhHdY6+cn8HFRm+2hM8AnXGXws9555KrUB5qihylGa8subX2Nn6UwN
-    R1AkUTV74bU=
-)
-"#;
+        // The root KSK (key tag 20326, algorithm 8), one record per line:
+        // the zone-file reader does not fold the parenthesised form.
+        let anchor_content = "\
+. 86400 IN DNSKEY 257 3 8 AwEAAaz/tAm8yTn4Mfeh5eyI96WSVexTBAvkMgJzkKTOiW1vkIbzxeF3+/4RgWOq7HrxRixHlFlExOLAJr5emLvN7SWXgnLh4+B5xQlNVz8Og8kvArMtNROxVQuCaSnIDdD5LKyWbRd2n9WGe2R8PzgCmr3EgVLrjyBxWezF0jLHwVN8efS3rCj/EWgvIWgb9tarpVUDK/b58Da+sqqls3eNbuv7pr+eoZG+SrDK6nWeL3c6H5Apxz7LjVc1uTIdsIXxuOLYA4/ilBmSVIzuDWfdRUfhHdY6+cn8HFRm+2hM8AnXGXws9555KrUB5qihylGa8subX2Nn6UwNR1AkUTV74bU=
+";
 
         fs::File::create(&anchor_path)
             .unwrap()
             .write_all(anchor_content.as_bytes())
             .unwrap();
 
-        assert!(anchor_path.exists());
-    }
-
-    #[test]
-    fn test_rfc5011_trust_anchor_state_machine() {
-        use synvoid_dns::dnssec::compute_ds_digest;
-        use synvoid_dns::trust_anchor::{Rfc5011Event, TrustAnchorConfig, TrustAnchorManager};
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("trust_anchors.db");
-
-        let public_key = vec![
-            0x04, 0x8F, 0xF1, 0xBE, 0x04, 0x1F, 0x9E, 0x4A, 0x22, 0xD5, 0x6E, 0xE8, 0x0A, 0x5C,
-            0x9D, 0xE5, 0x80, 0xF8, 0x64, 0x97, 0xD7, 0xF3, 0xBF, 0x1C, 0x9C, 0x7E, 0x2B, 0x8F,
-            0xE3, 0x1E, 0x8C, 0x9C, 0xB5, 0x6E, 0xF8, 0x0C, 0xF8, 0x0E, 0xC7, 0x89, 0x2C, 0x3E,
-            0xD3, 0x65, 0x4F, 0x5E, 0x70, 0x7F, 0x1E, 0x4D, 0x8E, 0x4A, 0x7B, 0x8A, 0x03, 0x8A,
-            0x6D, 0xD0, 0x7F, 0x9E, 0xF1, 0xC4, 0x6A, 0x1C, 0x9C, 0x5E, 0x4B, 0x3D, 0x8D, 0xF7,
-            0x6E, 0x0D, 0x5A, 0x8E, 0x4F, 0x3D, 0xAA, 0xB5, 0xA8, 0x5E, 0x0B, 0x1F, 0xC2, 0x9B,
-            0xE1, 0xE5, 0x8E, 0x5B, 0x6B, 0x7F, 0xA6, 0xE8, 0xE0, 0xF9, 0x89, 0x5D,
-        ];
-
-        let config = TrustAnchorConfig {
-            enabled: true,
-            db_path: db_path.to_string_lossy().to_string(),
-            anchor_file_path: "/dev/null".to_string(),
-            pending_observation_days: 30,
-            revocation_grace_days: 30,
-            extended_removal_days: 60,
-            trust_anchor_retention_days: 7,
-            allow_key_rotation: false,
-            refresh_interval_secs: 3600,
-        };
-
-        let manager = TrustAnchorManager::new(config);
-
-        let event = manager.observe_dnskey_at_root(20326, 8, &public_key, false);
-        assert!(matches!(event, Rfc5011Event::NewKeySeen { key_tag: 20326 }));
-
-        let status = manager.get_status();
-        assert_eq!(status.total_anchors, 1);
-
-        let event = manager.observe_dnskey_at_root(20326, 8, &public_key, false);
-        assert!(matches!(event, Rfc5011Event::KeySeen { key_tag: 20326 }));
-
-        let digest = compute_ds_digest(2, 257, 3, 8, &public_key)
-            .expect("digest computation should succeed");
-        let event = manager.trust_anchor_check(20326, 8, 2, &digest, None);
-        assert!(matches!(event, Rfc5011Event::KeyPending { key_tag: 20326 }));
-
-        let event = manager.process_rfc5011_updates();
-        assert!(event.is_empty());
-    }
-
-    #[test]
-    fn test_rfc5011_key_id_consistency() {
-        use synvoid_dns::trust_anchor::TrustAnchor;
-
-        let key_id_1 = TrustAnchor::generate_key_id(20326, 8);
-        let key_id_2 = TrustAnchor::generate_key_id(20326, 8);
-
-        assert_eq!(key_id_1, key_id_2);
-        assert_eq!(key_id_1, "20326-8");
-
-        let key_id_different = TrustAnchor::generate_key_id(38696, 8);
-        assert_ne!(key_id_1, key_id_different);
+        let anchors = synvoid_dns::load_static_trust_anchors(&anchor_path)
+            .expect("a static anchor file must load");
+        assert_eq!(anchors.len(), 1, "one DNSKEY in the file is one anchor");
     }
 
     #[test]
@@ -394,98 +329,6 @@ mod dns_config_tests {
         query.extend_from_slice(&1u16.to_be_bytes());
 
         query
-    }
-
-    #[test]
-    fn test_rfc5011_trust_anchor_full_flow() {
-        use synvoid_dns::trust_anchor::{Rfc5011Event, TrustAnchorConfig, TrustAnchorManager};
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("trust_anchors_full.db");
-
-        let config = TrustAnchorConfig {
-            enabled: true,
-            db_path: db_path.to_string_lossy().to_string(),
-            anchor_file_path: "/dev/null".to_string(),
-            pending_observation_days: 30,
-            revocation_grace_days: 30,
-            extended_removal_days: 60,
-            trust_anchor_retention_days: 7,
-            allow_key_rotation: false,
-            refresh_interval_secs: 3600,
-        };
-
-        let manager = TrustAnchorManager::new(config);
-
-        let public_key = vec![0x01, 0x02, 0x03, 0x04];
-        let key_tag = synvoid_dns::dnssec::calculate_key_tag(257, 3, 8, &public_key);
-
-        let event1 = manager.observe_dnskey_at_root(key_tag, 8, &public_key, false);
-        assert!(matches!(event1, Rfc5011Event::NewKeySeen { key_tag: kt } if kt == key_tag));
-
-        let event2 = manager.observe_dnskey_at_root(key_tag, 8, &public_key, false);
-        assert!(matches!(event2, Rfc5011Event::KeySeen { key_tag: kt } if kt == key_tag));
-
-        let digest = synvoid_dns::dnssec::compute_ds_digest(2, 257, 3, 8, &public_key)
-            .expect("digest computation should succeed");
-
-        let event3 = manager.trust_anchor_check(key_tag, 8, 2, &digest, None);
-        assert!(matches!(event3, Rfc5011Event::KeyPending { key_tag: kt } if kt == key_tag));
-
-        let events = manager.process_rfc5011_updates();
-        assert!(events.is_empty());
-    }
-
-    #[test]
-    fn test_rfc5011_revocation_flow() {
-        use synvoid_dns::trust_anchor::{Rfc5011Event, TrustAnchorConfig, TrustAnchorManager};
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("trust_anchors_revoked.db");
-
-        let config = TrustAnchorConfig {
-            enabled: true,
-            db_path: db_path.to_string_lossy().to_string(),
-            anchor_file_path: "/dev/null".to_string(),
-            revocation_grace_days: 30,
-            ..TrustAnchorConfig::default()
-        };
-
-        let manager = TrustAnchorManager::new(config);
-
-        let public_key = vec![0x01, 0x02, 0x03, 0x04];
-        let key_tag = synvoid_dns::dnssec::calculate_key_tag(257, 3, 8, &public_key);
-
-        manager.observe_dnskey_at_root(key_tag, 8, &public_key, false);
-
-        let event = manager.observe_dnskey_at_root(key_tag, 8, &public_key, true);
-        assert!(matches!(event, Rfc5011Event::KeyRevoked { key_tag: kt } if kt == key_tag));
-    }
-
-    #[test]
-    fn test_dnssec_trust_anchor_status() {
-        use synvoid_dns::trust_anchor::{TrustAnchorConfig, TrustAnchorManager};
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path().join("trust_anchors_status.db");
-
-        let config = TrustAnchorConfig {
-            enabled: true,
-            db_path: db_path.to_string_lossy().to_string(),
-            anchor_file_path: "/dev/null".to_string(),
-            ..TrustAnchorConfig::default()
-        };
-
-        let manager = TrustAnchorManager::new(config);
-
-        let status = manager.get_status();
-        assert_eq!(status.total_anchors, 0);
-        assert_eq!(status.valid_anchors, 0);
-        assert_eq!(status.revoked_anchors, 0);
-        assert_eq!(status.pending_anchors, 0);
     }
 
     #[test]
@@ -807,41 +650,6 @@ mod dns_config_tests {
 
         let algorithm_u8 = algorithm.to_u8();
         assert_eq!(algorithm_u8, 8);
-    }
-
-    #[test]
-    fn test_trust_anchor_config_defaults() {
-        use synvoid_dns::trust_anchor::TrustAnchorConfig;
-
-        let config = TrustAnchorConfig::default();
-
-        assert!(!config.enabled);
-        assert_eq!(config.pending_observation_days, 30);
-        assert_eq!(config.revocation_grace_days, 30);
-        assert_eq!(config.extended_removal_days, 60);
-        assert_eq!(config.trust_anchor_retention_days, 7);
-        assert!(config.allow_key_rotation);
-    }
-
-    #[test]
-    fn test_rfc5011_state_machine_concepts() {
-        use synvoid_dns::trust_anchor::Rfc5011Event;
-
-        let events = [
-            Rfc5011Event::NewKeySeen { key_tag: 12345 },
-            Rfc5011Event::KeyPending { key_tag: 12345 },
-            Rfc5011Event::KeyWaiting {
-                key_tag: 12345,
-                remaining_secs: 86400,
-            },
-            Rfc5011Event::KeyPromoted { key_tag: 12345 },
-            Rfc5011Event::KeyRevoked { key_tag: 12345 },
-            Rfc5011Event::KeyRemoved { key_tag: 12345 },
-            Rfc5011Event::KeyPurged { key_tag: 12345 },
-            Rfc5011Event::KeyMissing { key_tag: 12345 },
-        ];
-
-        assert_eq!(events.len(), 8);
     }
 
     #[test]

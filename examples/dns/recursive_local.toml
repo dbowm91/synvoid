@@ -27,8 +27,11 @@ bind_address = "127.0.0.1"
 port = 1053
 # Use system resolvers (e.g., /etc/resolv.conf)
 upstream_provider = "system"
-# DNSSEC validation — validates response integrity
+# DNSSEC validation is delegated: the system resolver validates and this server
+# forwards its AD bit. Local validation requires upstream_provider = "recursive"
+# (root hints + a static trust-anchor file).
 dnssec_validation = true
+allow_unvalidated_forwarding = true
 # QNAME minimization — reduces privacy leakage to upstream
 qname_minimization = true
 query_timeout_secs = 5

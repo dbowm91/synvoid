@@ -137,7 +137,7 @@ impl DnsSecConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
+#[derive(Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 #[serde(default)]
 pub struct HsmConfig {
     #[serde(default)]
@@ -160,6 +160,22 @@ pub struct HsmConfig {
 
     #[serde(default)]
     pub key_id: Option<String>,
+}
+
+/// The HSM PIN is a credential: a derived `Debug` would print it into any log
+/// line or error that formats the config, so only its presence is shown.
+impl std::fmt::Debug for HsmConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HsmConfig")
+            .field("enabled", &self.enabled)
+            .field("provider", &self.provider)
+            .field("module_path", &self.module_path)
+            .field("slot_id", &self.slot_id)
+            .field("pin", &self.pin.as_ref().map(|_| "<redacted>"))
+            .field("key_label", &self.key_label)
+            .field("key_id", &self.key_id)
+            .finish()
+    }
 }
 
 #[derive(
@@ -218,13 +234,30 @@ impl TsigAlgorithm {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, ToSchema)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema, Default, ToSchema)]
 #[serde(default)]
 pub struct TsigKeyConfig {
     pub name: String,
+    /// Base64 shared secret. Write-only at the admin boundary: `GET
+    /// /config/dns` redacts it, `PUT /config/dns` accepts it.
     pub secret_base64: String,
     #[serde(default)]
     pub algorithm: TsigAlgorithm,
+}
+
+impl std::fmt::Debug for TsigKeyConfig {
+    /// Redacts the shared secret so a stray `{:?}` cannot leak key material.
+    ///
+    /// This is the same contract `TsigRuntimeKey` holds on the DNS side; a
+    /// derived `Debug` here would put the secret in any `DnsConfig` or
+    /// `MainConfig` debug log line.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TsigKeyConfig")
+            .field("name", &self.name)
+            .field("secret", &"<redacted>")
+            .field("algorithm", &self.algorithm)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
@@ -303,16 +336,24 @@ impl Default for TrustAnchorConfig {
 }
 
 impl TrustAnchorConfig {
-    /// Phase 45 fail-closed contract: no custom trust-anchor manager is wired
-    /// (the recursive resolver uses system defaults via HickoryRecursor), so
-    /// activation is rejected.
+    /// Phase 45 fail-closed contract, narrowed by decision T5: RFC 5011
+    /// observation/promotion/revocation is not implemented, so this section
+    /// stays parseable but cannot be activated.
+    ///
+    /// The static file named by `dns.recursive.trust_anchor_path` is the only
+    /// supported anchor source. The rest of this section documents a lifecycle
+    /// (database, refresh interval, pending-observation window, revocation
+    /// grace) that has no runtime consumer; keeping the fields parseable lets
+    /// an existing configuration file load while the typed rejection tells the
+    /// operator which source actually applies.
     pub fn validate(&self) -> Result<(), DnsConfigError> {
         if self.enabled {
             return Err(super::unsupported(
                 "dns.trust_anchors.enabled",
-                "custom trust anchors have no runtime consumer. Keep disabled \
-                 until an RFC 5011-style lifecycle manager lands (future \
-                 trigger: validating-resolver product decision, Workstream F).",
+                "RFC 5011 trust-anchor management is not implemented: there is no observation, \
+                 promotion, or revocation state machine. Keep this section disabled; the only \
+                 supported trust-anchor source is the static file configured by \
+                 dns.recursive.trust_anchor_path.",
             ));
         }
         Ok(())

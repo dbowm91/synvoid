@@ -1,6 +1,6 @@
 # Phase 04 Plan: Message and State Authentication
 
-Status: **PROPOSED** (not started; findings verified at `4add005f`).
+Status: **PARTIAL** — 04a implemented in `ea638ff9` (Ed25519 identity re-key, identity signer, peer key registry, `verify_peer_message_signature`); 04b and 04c not started.
 
 Registered in: `plans/roadmap.md`.
 Campaign: `plans/mesh_trust_boundaries_roadmap.md`.

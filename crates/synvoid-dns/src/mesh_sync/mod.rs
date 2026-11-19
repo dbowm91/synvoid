@@ -26,7 +26,7 @@ mod registration;
 mod registry;
 mod verification;
 
-pub use dht_capability::{DhtGlobalLocator, DhtRecordStore};
+pub use dht_capability::{AdvertisedDomainRegistration, DhtGlobalLocator, DhtRecordStore};
 
 #[derive(Clone)]
 pub struct RegisteredEdgeNode {
@@ -47,7 +47,20 @@ pub struct RegisteredEdgeNode {
 #[derive(Clone)]
 pub struct RegisteredOriginNode {
     pub node_id: String,
+    /// Every domain this origin is currently allowed to answer for: the live
+    /// registration's declared zone plus, eventually, authorized DHT
+    /// registrations.
     pub domains: Vec<String>,
+    /// The zones the origin itself declared through a live, authenticated
+    /// `DnsRegistration` (one `domain` per registration).
+    ///
+    /// Kept separate from `domains` so a DHT-sourced registration can never
+    /// bootstrap its own authorization: condition (a) of the domain
+    /// authorization check reads this list, and only the live registration
+    /// path writes it.
+    pub declared_zones: Vec<String>,
+    /// Addresses to answer with when no edge node serves the domain.
+    pub ip_addresses: Vec<String>,
     pub geo: Option<String>,
     pub healthy: bool,
     pub capacity: u32,
@@ -61,6 +74,46 @@ pub struct RegisteredOriginNode {
     pub certificate_chain: Vec<Vec<u8>>,
     pub cert_chain_verified: bool,
 }
+
+/// Why a DHT domain registration was refused.
+///
+/// The variants are distinct on purpose: "not signed", "signed by a node other
+/// than the claimed origin", and "signed but not authorized" are three
+/// different operator actions, and collapsing them would make the metric
+/// useless.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DomainRegistrationRejection {
+    Unauthenticated,
+    PublisherMismatch,
+    Unauthorized,
+}
+
+impl DomainRegistrationRejection {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unauthenticated => "unauthenticated",
+            Self::PublisherMismatch => "publisher_mismatch",
+            Self::Unauthorized => "unauthorized",
+        }
+    }
+}
+
+/// A refused DHT domain registration, retained for telemetry.
+///
+/// R2 default-deny: a signed registration for an unauthorized domain is still
+/// visible to an operator (so a misconfigured allowlist is diagnosable), but it
+/// is never inserted into the served maps.
+#[derive(Clone, Debug)]
+pub struct UntrustedDomainRegistration {
+    pub domain: String,
+    pub origin_node_id: String,
+    pub publisher_id: String,
+    pub reason: DomainRegistrationRejection,
+    pub observed_at: u64,
+}
+
+/// Cap on retained refusals, so a hostile DHT cannot grow this without bound.
+const MAX_UNTRUSTED_REGISTRATIONS: usize = 128;
 
 #[derive(Clone)]
 pub struct RegisteredAnycastNode {
@@ -123,6 +176,9 @@ pub struct MeshDnsRegistryConfig {
     pub verification_timeout_secs: u64,
     pub verification_retry_interval_secs: u64,
     pub require_cert_chain_verification: bool,
+    /// Domains a DHT-sourced registration may answer for, projected from
+    /// `[dns.mesh] authorized_domains`. Empty means default deny.
+    pub authorized_domains: Vec<String>,
 }
 
 impl Default for MeshDnsRegistryConfig {
@@ -138,6 +194,7 @@ impl Default for MeshDnsRegistryConfig {
             verification_timeout_secs: 600,
             verification_retry_interval_secs: 30,
             require_cert_chain_verification: false,
+            authorized_domains: Vec::new(),
         }
     }
 }
@@ -166,6 +223,8 @@ pub struct MeshDnsRegistry {
     verification_metrics: VerificationMetrics,
     /// DNS-owned country lookup; see `crate::geo::CountryLookup`.
     geoip: Option<Arc<dyn CountryLookup>>,
+    /// DHT registrations refused at this boundary, for operator telemetry.
+    untrusted_registrations: Arc<RwLock<Vec<UntrustedDomainRegistration>>>,
 }
 
 pub struct VerificationTask {

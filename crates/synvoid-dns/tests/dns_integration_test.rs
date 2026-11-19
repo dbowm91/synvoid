@@ -501,7 +501,7 @@ mod tests {
             0x00, 0x00, // ANCOUNT = 0
             0x00, 0x00, // NSCOUNT = 0
             0x00, 0x00, // ARCOUNT = 0
-            0x06, b'n', b'o', b'n', b'e', b'x', b'i', b's', b't', // nonexistent
+            0x08, b'n', b'o', b'n', b'e', b'x', b'i', b's', b't', // nonexistent
             0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e', // example
             0x03, b'c', b'o', b'm', // com
             0x00, // end
@@ -512,6 +512,16 @@ mod tests {
         let response = build_error_response(&query, RCODE_NXDOMAIN).unwrap();
 
         assert!(response.len() > 17);
+        assert_eq!(
+            u16::from_be_bytes([response[4], response[5]]),
+            1,
+            "QDCOUNT must be 1 when the question is copied"
+        );
+        assert_eq!(
+            &response[12..],
+            &query[12..],
+            "the question section must be copied verbatim"
+        );
     }
 
     #[test]

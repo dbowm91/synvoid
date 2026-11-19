@@ -153,6 +153,7 @@ pub fn dns_runtime_config_from_persisted(config: &DnsConfig) -> Result<DnsRuntim
         doq: doq_runtime(&config.doq)?,
         dynamic_update: dynamic_update_runtime(&config.settings),
         zone_transfer: zone_transfer_runtime(&config.settings)?,
+        require_cookie: config.settings.require_cookie,
         anycast: AnycastRuntimeConfig {
             enabled: config.anycast.enabled,
         },
@@ -223,6 +224,7 @@ fn cache_runtime(settings: &synvoid_config::dns::DnsSettingsConfig) -> CacheRunt
 fn limits_runtime(limits: &synvoid_config::dns::DnsLimitsConfig) -> Result<LimitsRuntimeConfig> {
     Ok(LimitsRuntimeConfig {
         max_tcp_connections: limits.max_tcp_connections,
+        max_encrypted_connections: limits.max_encrypted_connections,
         max_concurrent_queries: limits.max_concurrent_queries,
         max_query_size: limits.max_query_size,
         max_response_size: limits.max_response_size,

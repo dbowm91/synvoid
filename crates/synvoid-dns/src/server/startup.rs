@@ -1,7 +1,4 @@
 use super::*;
-use crate::cache::TransportClass;
-use crate::parsed_query::ParsedDnsQuery;
-
 /// Validate the authoritative bind socket from runtime configuration.
 ///
 /// The address is already parsed by the application-owned adapter, so the only
@@ -50,15 +47,44 @@ impl DnsServer {
     }
 
     pub async fn start(&mut self) -> Result<(), String> {
+        // R3: the realized flags are set where the thing is realized. The
+        // handlers are attached by composition before `start()`, so this is the
+        // first point that can see them; `init_health_state` records only what
+        // configuration requested.
+        self.health.set_axfr_enabled(
+            self.zone_transfer
+                .as_ref()
+                .is_some_and(|transfer| transfer.is_axfr_enabled()),
+        );
+        self.health.set_ixfr_enabled(
+            self.zone_transfer
+                .as_ref()
+                .is_some_and(|transfer| transfer.is_ixfr_enabled()),
+        );
+        self.health
+            .set_update_enabled(self.update_handler.is_some());
+        self.health
+            .set_notify_enabled(self.notify_handler.is_some());
+
         if self.dnssec_runtime.enabled {
-            if let Err(e) = self.initialize_dnssec() {
-                tracing::warn!("Failed to initialize DNSSEC: {}", e);
+            // A configured signed zone that cannot be signed is a startup
+            // error, not a degraded mode: serving it unsigned would be a
+            // silent downgrade of every RRset the zone claims to sign (R3).
+            self.initialize_dnssec().map_err(|e| {
+                tracing::error!("Failed to initialize DNSSEC: {}", e);
                 self.health.set_dnssec_signing_enabled(false);
-            } else {
-                tracing::info!("DNSSEC initialized successfully");
-                self.health.set_dnssec_signing_enabled(true);
-                Self::start_key_rotation_task(self.dnssec.clone(), 86400);
-            }
+                format!("DNSSEC initialization failed: {e}")
+            })?;
+            tracing::info!("DNSSEC initialized successfully");
+            // Keys existing in the manager is not signing: at least one loaded
+            // zone must hold a ZSK handle for the health claim to be true.
+            self.health
+                .set_dnssec_signing_enabled(self.has_signing_zone());
+            // Phase 05 R4: there is no runtime key-rotation task. Rotation is
+            // a manual runbook operation (docs/dns-dnssec-architecture.md):
+            // the served zone's key handles are reload-only, so rotating the
+            // keystore while the server runs would change the validator's key
+            // without changing the published DNSKEY.
         }
 
         if self.recursive.enabled {
@@ -118,10 +144,21 @@ impl DnsServer {
         let rate_limiter = self.rate_limiter.clone();
         let metrics = None;
 
+        // `dns.recursive.firewall` is policy, not decoration: build it here and
+        // fail startup if it cannot be built, rather than binding a listener
+        // that ignores it (the recursive port had `firewall: None`).
+        let firewall = if self.recursive.firewall.enabled {
+            let firewall = crate::firewall::DnsFirewall::from_runtime(&self.recursive.firewall)
+                .map_err(|e| format!("Failed to build recursive DNS firewall: {}", e))?;
+            Some(Arc::new(RwLock::new(firewall)))
+        } else {
+            None
+        };
+
         let recursive_server = crate::recursive::RecursiveDnsServer::new(
             (*self.recursive).clone(),
             rate_limiter,
-            None,
+            firewall,
             metrics,
         )
         .await
@@ -185,7 +222,7 @@ impl DnsServer {
                 rate_limiter: rate_limiter_udp,
                 query_validator: query_validator_udp,
                 firewall: firewall_udp,
-                connection_limits: _connection_limits_udp,
+                connection_limits: connection_limits_udp,
                 min_geo_ttl,
                 negative_cache_ttl,
                 cache: cache_udp,
@@ -213,7 +250,7 @@ impl DnsServer {
                 signer_name: signer_name_udp.as_ref(),
                 query_validator: query_validator_udp.as_ref(),
                 firewall: firewall_udp.as_ref(),
-                connection_limits: None,
+                connection_limits: Some(&connection_limits_udp),
                 max_idle_time: None,
                 zone_transfer: zone_transfer_udp.as_ref(),
                 ecs_filter_config: &ecs_filter_config_udp,
@@ -237,169 +274,33 @@ impl DnsServer {
                             Ok((len, src)) => {
                                 let client_ip = src.ip();
 
-                                let allowed = if let Some(rl) = &rate_limiter_udp {
-                                    rl.check_ip(client_ip).is_ok()
-                                } else {
-                                    true
-                                };
-
-                                if !allowed {
-                                    tracing::debug!(
-                                        transport = "udp",
-                                        client = %client_ip,
-                                        "DNS query rate limited"
-                                    );
-                                    continue;
-                                }
-
-                                // Validate query structure
-                                let query_validator = query_validator_udp.as_ref();
-                                if let Some(validator) = query_validator {
-                                    if let Err(resp) = validator.validate_query_with_response(&buf[..len]) {
-                                        if let Some(response) = resp {
-                                            if let Err(e) = socket.send_to(&response, &src).await {
-                                                tracing::debug!("Failed to send error response: {}", e);
-                                            }
-                                        }
+                                // One gate for every transport: size, header,
+                                // QR, opcode, QDCOUNT, question structure,
+                                // QCLASS, EDNS, firewall, rate limit.
+                                let admitted = match crate::server::admit(
+                                    &buf[..len],
+                                    client_ip,
+                                    crate::server::TransportKind::Udp,
+                                    &ctx,
+                                ) {
+                                    crate::server::Admission::Allow(admitted) => admitted,
+                                    crate::server::Admission::Reply(response) => {
+                                        let _ = socket.send_to(&response, &src).await;
                                         continue;
                                     }
-                                }
-
-                                // Parse once for firewall, coalescing, and downstream
-                                let parsed = ParsedDnsQuery::parse(&buf[..len]);
-                                let query_name = parsed
-                                    .as_ref()
-                                    .map(|p| p.qname.clone())
-                                    .unwrap_or_else(|_| "unknown".to_string());
-
-                                // Firewall check
-                                if let Some(fw) = firewall_udp.as_ref() {
-                                    if let Ok(ref parsed_q) = parsed {
-                                        let firewall = fw.read();
-                                        match firewall.evaluate_query(parsed_q, client_ip, &query_name) {
-                                            Ok(decision) => {
-                                                if decision.action == crate::firewall::DnsFirewallAction::Block {
-                                                    tracing::warn!(
-                                                        "DNS query blocked by firewall: rule={} client={} qname={}",
-                                                        decision.rule_id,
-                                                        client_ip,
-                                                        query_name
-                                                    );
-                                                    continue;
-                                                }
-                                            }
-                                            Err(e) => {
-                                                tracing::warn!("Firewall evaluation error: {}", e);
-                                            }
-                                        }
-                                    }
-                                }
-
-                                let skip_coalesce = parsed
-                                    .as_ref()
-                                    .map(|pq| crate::query_coalesce::should_skip_coalescing(pq.qtype, pq.flags.opcode))
-                                    .unwrap_or(false);
-
-                                // Derive transport class from EDNS for cache keying
-                                let transport_class = if let Ok(ref parsed_q) = parsed {
-                                    if parsed_q.has_edns {
-                                        // Extract UDP payload size from OPT record class field
-                                        let opt_offset = parsed_q.question_end;
-                                        if opt_offset + 4 <= buf.len() {
-                                            let udp_payload_size = u16::from_be_bytes(
-                                                [buf[opt_offset + 3], buf[opt_offset + 4]],
-                                            );
-                                            TransportClass::UdpEdns(udp_payload_size)
-                                        } else {
-                                            TransportClass::UdpEdns(1232)
-                                        }
-                                    } else {
-                                        TransportClass::Udp512
-                                    }
-                                } else {
-                                    TransportClass::Udp512
+                                    crate::server::Admission::Drop => continue,
                                 };
 
-                                let query_key = if skip_coalesce {
-                                    None
-                                } else if let Ok(ref parsed_q) = parsed {
-                                    crate::query_coalesce::QueryKey::from_parsed(parsed_q, Some(client_ip), &buf[..len], Some(transport_class))
-                                } else {
-                                    crate::query_coalesce::QueryKey::from_query(&buf[..len], Some(client_ip), Some(transport_class))
-                                };
-
-                                let _dnssec = dnssec_udp.clone();
-                                let _signer_name = signer_name_udp.clone();
                                 let rate_limiter = rate_limiter_udp.clone();
                                 let rrl_enabled = rrl_enabled_udp;
 
-                                let response = if let Some(coalescer) = &ctx.query_coalescer {
-
-                                    if let Some(key) = query_key {
-                                        match coalescer.get_or_wait(key.clone()).await {
-                                            Some(crate::query_coalesce::CoalesceResult::Response(resp)) => {
-                                                Some(resp)
-                                            }
-                                            Some(crate::query_coalesce::CoalesceResult::NewQuery(_tx)) => {
-                                                let resp = if let (Some(c), Ok(ref parsed_q)) = (&ctx.cache, &parsed) {
-                                                    Self::handle_parsed_query_with_cache(&ctx, parsed_q, &buf[..len], c, transport_class, Some(client_ip))
-                                                } else if let Some(c) = &ctx.cache {
-                                                    Self::handle_query_with_cache(&ctx, &buf[..len], c, transport_class, Some(client_ip))
-                                                } else if let Ok(ref parsed_q) = &parsed {
-                                                    Self::handle_parsed_query(&ctx, parsed_q, &buf[..len], Some(client_ip))
-                                                } else {
-                                                    Self::handle_query(&ctx, &buf[..len], Some(client_ip))
-                                                };
-
-                                                if let Some(ref r) = resp {
-                                                    coalescer.broadcast_response(key.clone(), r.clone());
-                                                } else {
-                                                    coalescer.cancel_in_flight(&key);
-                                                }
-
-                                                resp
-                                            }
-                                            None => {
-                                                if let (Some(c), Ok(ref parsed_q)) = (&ctx.cache, &parsed) {
-                                                    Self::handle_parsed_query_with_cache(&ctx, parsed_q, &buf[..len], c, transport_class, Some(client_ip))
-                                                } else if let Some(c) = &ctx.cache {
-                                                    Self::handle_query_with_cache(&ctx, &buf[..len], c, transport_class, Some(client_ip))
-                                                } else if let Ok(ref parsed_q) = &parsed {
-                                                    Self::handle_parsed_query(&ctx, parsed_q, &buf[..len], Some(client_ip))
-                                                } else {
-                                                    Self::handle_query(&ctx, &buf[..len], Some(client_ip))
-                                                }
-                                            }
-                                            _ => {
-                                                if let (Some(c), Ok(ref parsed_q)) = (&ctx.cache, &parsed) {
-                                                    Self::handle_parsed_query_with_cache(&ctx, parsed_q, &buf[..len], c, transport_class, Some(client_ip))
-                                                } else if let Some(c) = &ctx.cache {
-                                                    Self::handle_query_with_cache(&ctx, &buf[..len], c, transport_class, Some(client_ip))
-                                                } else if let Ok(ref parsed_q) = &parsed {
-                                                    Self::handle_parsed_query(&ctx, parsed_q, &buf[..len], Some(client_ip))
-                                                } else {
-                                                    Self::handle_query(&ctx, &buf[..len], Some(client_ip))
-                                                }
-                                            }
-                                        }
-                                    } else if let (Some(c), Ok(ref parsed_q)) = (&ctx.cache, &parsed) {
-                                        Self::handle_parsed_query_with_cache(&ctx, parsed_q, &buf[..len], c, transport_class, Some(client_ip))
-                                    } else if let Some(c) = &ctx.cache {
-                                        Self::handle_query_with_cache(&ctx, &buf[..len], c, transport_class, Some(client_ip))
-                                    } else if let Ok(ref parsed_q) = &parsed {
-                                        Self::handle_parsed_query(&ctx, parsed_q, &buf[..len], Some(client_ip))
-                                    } else {
-                                        Self::handle_query(&ctx, &buf[..len], Some(client_ip))
-                                    }
-                                } else if let (Some(c), Ok(ref parsed_q)) = (&ctx.cache, &parsed) {
-                                    Self::handle_parsed_query_with_cache(&ctx, parsed_q, &buf[..len], c, transport_class, Some(client_ip))
-                                } else if let Some(c) = &ctx.cache {
-                                    Self::handle_query_with_cache(&ctx, &buf[..len], c, transport_class, Some(client_ip))
-                                } else if let Ok(ref parsed_q) = &parsed {
-                                    Self::handle_parsed_query(&ctx, parsed_q, &buf[..len], Some(client_ip))
-                                } else {
-                                    Self::handle_query(&ctx, &buf[..len], Some(client_ip))
-                                };
+                                let response = Self::serve_admitted(
+                                    &ctx,
+                                    &admitted,
+                                    &buf[..len],
+                                    Some(client_ip),
+                                )
+                                .await;
 
                                 if let Some(ref resp) = response {
                                     if rrl_enabled {
@@ -481,21 +382,12 @@ impl DnsServer {
                             Ok((stream, _src)) => {
                                 let client_ip = stream.peer_addr().map(|a| a.ip()).unwrap_or_else(|_| IpAddr::from([0,0,0,0]));
 
-                                let allowed = if let Some(rl) = &rate_limiter_tcp {
-                                    rl.check_ip(client_ip).is_ok()
-                                } else {
-                                    true
-                                };
-
-                                if !allowed {
-                                    tracing::debug!(
-                                        transport = "tcp",
-                                        client = %client_ip,
-                                        "DNS TCP query rate limited"
-                                    );
-                                    continue;
-                                }
-
+                                // Rate limiting runs in `admit`, per query.
+                                // A pre-check here would charge the token before
+                                // the listener knows whether the connection
+                                // carries a query at all, and would silently
+                                // drop the connection instead of returning the
+                                // same REFUSED as every other transport.
                                 let zones_clone = zones_tcp.clone();
                                 let zone_trie_clone = zone_trie_tcp.clone();
                                 let _zone_index_clone = zone_index_tcp.clone();
@@ -592,14 +484,19 @@ impl DnsServer {
             if let Err(e) = dot.start().await {
                 tracing::warn!("Failed to start DoT server: {}", e);
                 self.health.set_cert_valid(false);
+                // Configured, but no listener: /health must say so.
+                self.health.set_dot_enabled(false);
             } else {
                 tracing::info!(
                     "DoT server started on {}",
                     bind.map(|a| a.port()).unwrap_or_default()
                 );
                 self.health.set_cert_valid(true);
+                self.health.set_dot_enabled(true);
             }
             self.dot_server = Some(dot);
+        } else {
+            self.health.set_dot_enabled(false);
         }
 
         if self.authoritative.doh.enabled {
@@ -609,14 +506,18 @@ impl DnsServer {
             if let Err(e) = doh.start().await {
                 tracing::warn!("Failed to start DoH server: {}", e);
                 self.health.set_cert_valid(false);
+                self.health.set_doh_enabled(false);
             } else {
                 tracing::info!(
                     "DoH server started on {}",
                     bind.map(|a| a.port()).unwrap_or_default()
                 );
                 self.health.set_cert_valid(true);
+                self.health.set_doh_enabled(true);
             }
             self.doh_server = Some(doh);
+        } else {
+            self.health.set_doh_enabled(false);
         }
 
         if self.authoritative.doq.enabled {
@@ -626,14 +527,18 @@ impl DnsServer {
             if let Err(e) = doq.start().await {
                 tracing::warn!("Failed to start DoQ server: {}", e);
                 self.health.set_cert_valid(false);
+                self.health.set_doq_enabled(false);
             } else {
                 tracing::info!(
                     "DoQ server started on {}",
                     bind.map(|a| a.port()).unwrap_or_default()
                 );
                 self.health.set_cert_valid(true);
+                self.health.set_doq_enabled(true);
             }
             self.doq_server = Some(doq);
+        } else {
+            self.health.set_doq_enabled(false);
         }
 
         Ok(())

@@ -10,7 +10,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 use synvoid_dns::server::{DnsZoneRecord, RecordType, ShardedZoneStore, Zone};
-use synvoid_dns::transfer::ZoneTransfer;
+use synvoid_dns::transfer::{TransferAcl, ZoneTransfer};
 
 use support::query::encode_qname;
 use support::zone::zone_with_soa;
@@ -128,7 +128,7 @@ fn make_transfer_ixfr(
 ) -> ZoneTransfer {
     ZoneTransfer::with_security_config(
         zones,
-        allowed,
+        TransferAcl::from_entries(&allowed),
         None,
         false,
         false,
@@ -138,6 +138,7 @@ fn make_transfer_ixfr(
         false,
         true,
     )
+    .expect("no TSIG required")
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -182,6 +183,7 @@ fn ixfr_single_add_produces_two_messages() {
             None,
             0xCAFE,
             &build_ixfr_query("example.test", old_serial),
+            true,
         )
         .unwrap();
 
@@ -232,6 +234,7 @@ fn ixfr_single_delete_in_first_message() {
             None,
             0xCAFE,
             &build_ixfr_query("example.test", old_serial),
+            true,
         )
         .unwrap();
 
@@ -298,6 +301,7 @@ fn ixfr_modify_old_and_new_in_correct_messages() {
             None,
             0xCAFE,
             &build_ixfr_query("example.test", old_serial),
+            true,
         )
         .unwrap();
 
@@ -380,6 +384,7 @@ fn ixfr_multi_record_delta_counts() {
             None,
             0xCAFE,
             &build_ixfr_query("example.test", old_serial),
+            true,
         )
         .unwrap();
 
@@ -444,6 +449,7 @@ fn ixfr_serial_comparison_normal() {
             None,
             0xCAFE,
             &build_ixfr_query("example.test", old_serial),
+            true,
         )
         .unwrap();
     assert_eq!(msgs.len(), 2, "valid serial diff must produce delta");
@@ -471,6 +477,7 @@ fn ixfr_current_serial_soa_only() {
             None,
             0xCAFE,
             &build_ixfr_query("example.test", 42),
+            true,
         )
         .unwrap();
     assert_eq!(msgs.len(), 1, "current serial must return 1 message");
@@ -497,6 +504,7 @@ fn ixfr_disabled_returns_error() {
         None,
         0xCAFE,
         &build_ixfr_query("example.test", 0),
+        true,
     );
     assert!(result.is_err(), "disabled IXFR must return error");
 }

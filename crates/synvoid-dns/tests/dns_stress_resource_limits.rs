@@ -233,6 +233,7 @@ async fn test_coalescer_max_entries_bounded() {
             qtype: 1,
             qclass: 1,
             dnssec_ok: false,
+            cd: false,
             client_ip: None,
             transport_class: TransportClass::Udp512,
             namespace: CacheNamespace::Authoritative,

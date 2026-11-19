@@ -75,26 +75,57 @@ pub fn build_notify_query(id: u16, qname: &str) -> Vec<u8> {
     q
 }
 
-/// Build a query with an EDNS OPT record containing the DO bit set.
+/// Build a query with one EDNS OPT record.
 ///
-/// Appends a single OPT record to the AR section (ARCOUNT=1) with:
+/// Appends `arcount` OPT records to the additional section (ARCOUNT is set to
+/// match). Each record has:
 /// - Name: root (0x00)
 /// - Type: OPT (41)
-/// - Class: UDP payload size (4096)
-/// - TTL: DO=1 (`0x0000_8000`)
+/// - Class: UDP payload size (`udp_payload_size`)
+/// - TTL: `version << 16 | (dnssec_ok ? 0x8000 : 0)`
 /// - RDLENGTH: 0
-pub fn build_query_with_do_bit(id: u16, qname: &str, qtype: u16) -> Vec<u8> {
+pub fn build_query_with_edns_options(
+    id: u16,
+    qname: &str,
+    qtype: u16,
+    udp_payload_size: u16,
+    version: u8,
+    dnssec_ok: bool,
+    arcount: u16,
+) -> Vec<u8> {
     let mut q = build_query(id, qname, qtype);
-    q.push(0); // root name
-    q.extend_from_slice(&41u16.to_be_bytes()); // type OPT
-    q.extend_from_slice(&4096u16.to_be_bytes()); // class = UDP payload size
-    q.extend_from_slice(&0x0000_8000u32.to_be_bytes()); // TTL: DO=1
-    q.extend_from_slice(&0u16.to_be_bytes()); // RDLENGTH
-                                              // Update ARCOUNT to 1
-    let arcount_pos = 10;
-    q[arcount_pos] = 0;
-    q[arcount_pos + 1] = 1;
+    for _ in 0..arcount {
+        q.push(0); // root name
+        q.extend_from_slice(&41u16.to_be_bytes()); // type OPT
+        q.extend_from_slice(&udp_payload_size.to_be_bytes()); // class = UDP payload size
+        let ttl = (u32::from(version) << 16) | u32::from(if dnssec_ok { 0x8000u16 } else { 0 });
+        q.extend_from_slice(&ttl.to_be_bytes());
+        q.extend_from_slice(&0u16.to_be_bytes()); // RDLENGTH
+    }
+    q[10..12].copy_from_slice(&arcount.to_be_bytes());
     q
+}
+
+/// Build a query with a single EDNS OPT record.
+///
+/// See [`build_query_with_edns_options`] for the per-record layout.
+pub fn build_query_with_edns(
+    id: u16,
+    qname: &str,
+    qtype: u16,
+    udp_payload_size: u16,
+    version: u8,
+    dnssec_ok: bool,
+) -> Vec<u8> {
+    build_query_with_edns_options(id, qname, qtype, udp_payload_size, version, dnssec_ok, 1)
+}
+
+/// Build a query with an EDNS OPT record containing the DO bit set.
+///
+/// Appends a single OPT record to the AR section (ARCOUNT=1) with UDP payload
+/// size 4096 and DO=1.
+pub fn build_query_with_do_bit(id: u16, qname: &str, qtype: u16) -> Vec<u8> {
+    build_query_with_edns(id, qname, qtype, 4096, 0, true)
 }
 
 /// Encode a domain name into DNS wire-format labels.

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 use tokio::net::TcpListener;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Semaphore};
 use tokio_rustls::TlsAcceptor;
 
 use crate::secure_transport::SecureTransportConfig;
@@ -11,6 +11,14 @@ use crate::server::DnsServer;
 
 pub const TLS_HANDSHAKE_TIMEOUT_SECS: u64 = 10;
 pub const MAX_QUERY_SIZE: usize = 65535;
+
+/// Connection cap used before a `DnsServer` is attached to the listener.
+///
+/// Production attaches the server before `start_server`, and the real cap is
+/// `dns.limits.max_encrypted_connections` (default 500). This value matches
+/// `ConnectionLimits::default().max_tcp_connections()` so a transport started
+/// without a server (tests, embedded use) is still bounded.
+pub const DEFAULT_MAX_ENCRYPTED_CONNECTIONS: usize = 1000;
 
 /// ALPN protocol identifiers a stream transport advertises, in preference
 /// order.
@@ -175,7 +183,7 @@ impl<C: DnsServerConfig> SecureDnsServerBase<C> {
     async fn accept_loop<F, Fut>(
         listener: TcpListener,
         dns_server: Arc<RwLock<Option<DnsServer>>>,
-        _config: Arc<C>,
+        config: Arc<C>,
         acceptor: Arc<TlsAcceptor>,
         shutdown_rx: oneshot::Receiver<()>,
         handle_connection: F,
@@ -192,6 +200,18 @@ impl<C: DnsServerConfig> SecureDnsServerBase<C> {
             + 'static,
         Fut: std::future::Future<Output = Result<(), String>> + Send,
     {
+        // Phase 03 (D33): the encrypted accept loop is capped exactly like
+        // plain TCP. The permit is acquired before the TLS handshake so an
+        // attacker cannot hold a handshake slot for every TCP connection the
+        // kernel will accept.
+        let max_connections = dns_server
+            .read()
+            .as_ref()
+            .map(|server| server.max_encrypted_connections())
+            .unwrap_or(DEFAULT_MAX_ENCRYPTED_CONNECTIONS);
+        let permits = Arc::new(Semaphore::new(max_connections));
+        let server_name = config.server_name();
+
         tokio::select! {
             _ = shutdown_rx => {
                 tracing::info!("DNS server shutting down");
@@ -200,11 +220,36 @@ impl<C: DnsServerConfig> SecureDnsServerBase<C> {
                 loop {
                     match listener.accept().await {
                         Ok((stream, client_addr)) => {
+                            // Drop-with-log rather than queue: a saturated
+                            // listener must not let the kernel backlog hold
+                            // handshake state indefinitely. Releasing the
+                            // stream resets the client immediately.
+                            let permit = match Arc::clone(&permits).try_acquire_owned() {
+                                Ok(permit) => permit,
+                                Err(_) => {
+                                    metrics::counter!(
+                                        "synvoid.dns.encrypted_connections.saturated",
+                                        "transport" => server_name
+                                    )
+                                    .increment(1);
+                                    tracing::warn!(
+                                        transport = server_name,
+                                        client = %client_addr,
+                                        max_connections,
+                                        "Encrypted DNS connection rejected: connection cap reached"
+                                    );
+                                    drop(stream);
+                                    continue;
+                                }
+                            };
+
                             let dns_server = dns_server.clone();
                             let acceptor = acceptor.clone();
                             let handler = handle_connection.clone();
 
                             tokio::spawn(async move {
+                                // Held for the whole connection lifetime.
+                                let _permit = permit;
                                 if let Err(e) = handler(stream, client_addr, dns_server, acceptor).await {
                                     tracing::debug!("Connection error from {}: {}", client_addr, e);
                                 }

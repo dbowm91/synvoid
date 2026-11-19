@@ -8,6 +8,7 @@ fn build_query_key(name: &str, qtype: u16) -> QueryKey {
         qtype,
         qclass: 1,
         dnssec_ok: false,
+        cd: false,
         client_ip: Some("192.168.1.1".to_string()),
         transport_class: TransportClass::Udp512,
         namespace: CacheNamespace::Authoritative,

@@ -69,7 +69,7 @@ The module is located at `crates/synvoid-dns/` and exports a rich set of submodu
 | `dnssec_key_mgmt.rs` | `crates/synvoid-dns/src/dnssec_key_mgmt.rs` | Facade over `synvoid-dnssec-keystore::keystore` (generation/sealed storage/rotation live in the keystore) |
 | `dnssec_signing.rs` | `crates/synvoid-dns/src/dnssec_signing.rs` | Narrow `sign_data` over sealed handles + RRSIG creation, NSEC/NSEC3 record generation (public-only) |
 | `dnssec_validation.rs` | `crates/synvoid-dns/src/dnssec_validation.rs` | Signature verification, canonicalization, DS digest (public-only; key-tag delegates to the keystore) |
-| `trust_anchor.rs` | `crates/synvoid-dns/src/trust_anchor.rs` | RFC 5011 trust anchor state machine (public-only; intentionally stays in `synvoid-dns`, not the keystore) |
+| ~~`trust_anchor.rs`~~ | *deleted* | Was the RFC 5011 trust-anchor state machine. Removed by decision **T5**: nothing fed it and nothing consumed it. Anchors are now a static file read through `resolver::load_static_trust_anchors`; see `docs/RFC5011_TRUST_ANCHOR.md`. |
 
 ### 2.3 Resolvers
 
@@ -233,18 +233,26 @@ pub struct RecursiveDnsServer {
 }
 ```
 
-### 3.4 TrustAnchorState (trust_anchor.rs:30)
+### 3.4 Trust anchors (static file only)
+
+RFC 5011 management is **not implemented** (decision T5). `TrustAnchorState`,
+`TrustAnchorManager`, `TrustAnchorConfig`, `TrustAnchorStatus` and
+`Rfc5011Event` were deleted with `trust_anchor.rs`; no observation, promotion or
+revocation state machine exists.
+
+Anchors come from one file, read once at startup:
 
 ```rust
-pub enum TrustAnchorState {
-    Valid,      // Fully trusted
-    Seen,       // Observed in DNSKEY but not yet validated via CDS
-    Pending,    // Validated via CDS, awaiting 30-day observation (RFC 5011)
-    Revoked,    // REVOKE bit observed
-    Removed,    // Removed from zone
-    Missing,    // Was Valid but expired
-}
+// resolver.rs
+pub fn load_static_trust_anchors(path: &Path) -> Result<hickory_proto::dnssec::TrustAnchors, String>
+
+// HickoryRecursor::from_paths uses it for
+// DnssecPolicy::ValidateWithStaticKey(DnssecConfig { trust_anchor, .. })
 ```
+
+The `[dns.trust_anchors]` config section still parses, but activating it is a
+typed `Unsupported` (`dns.trust_anchors.enabled`) whose message names
+`dns.recursive.trust_anchor_path` as the only source.
 
 ### 3.5 Key DNSSEC Types (Phase 30: canonical in `synvoid-dnssec-keystore`)
 
@@ -663,20 +671,25 @@ impl RecursiveDnsServer {
 }
 ```
 
-### 4.3 HickoryRecursor (RFC 5011 support)
+### 4.3 HickoryRecursor (static anchors, configured recursion limit)
 
 ```rust
-// resolver.rs:629
+// resolver.rs
 impl HickoryRecursor {
     pub fn new(root_hints_path: &str, trust_anchor_path: &str, enable_dnssec: bool) -> Result<Self, ResolverError>
-    pub async fn start_rfc5011_updates(self: Arc<Self>) -> Result<(), ResolverError>
-    pub async fn stop_rfc5011_updates(&self)
-    pub fn get_trust_anchor_status(&self) -> Option<TrustAnchorStatus>
-    pub async fn lookup_dnskey(&self, name: &str) -> ResolverResult<Vec<DnsKeyRecord>>
-    pub async fn lookup_cds(&self, name: &str) -> ResolverResult<Vec<CdsRecord>>
-    pub async fn perform_rfc5011_trust_anchor_check(&self, zone: &str) -> ResolverResult<Rfc5011CheckResult>
+    pub fn from_paths(root_hints_path: &Path, trust_anchor_path: &Path, enable_dnssec: bool, limits: RecursorLimits) -> Result<Self, ResolverError>
 }
 ```
+
+`RecursorLimits::recursion_limit` is `dns.recursive.max_recursion_depth` and is
+passed straight to hickory's `RecursorOptions::recursion_limit`; the configured
+`max_cname_depth` is enforced by `recursive.rs` against the answered chain
+(hickory's `ns_recursion_limit` bounds nameserver-pool depth, not CNAMEs).
+
+`start_rfc5011_updates`, `get_trust_anchor_status`, `lookup_dnskey`,
+`lookup_cds` and `perform_rfc5011_trust_anchor_check` were removed with the
+RFC 5011 state machine (T5). DS/DNSKEY/NAPTR are answered through
+`DnsResolver::lookup_rrset`, the same path as every other type.
 
 ### 4.4 TSIG Verification
 
@@ -691,22 +704,13 @@ impl TsigVerifier {
 }
 ```
 
-### 4.5 TrustAnchorManager (RFC 5011)
+### 4.5 Removed: TrustAnchorManager (RFC 5011)
 
-```rust
-// trust_anchor.rs:191
-impl TrustAnchorManager {
-    pub fn new(config: TrustAnchorConfig) -> Self
-    pub fn add_anchor(&self, key_id: String, key_tag: u16, algorithm: u8, public_key: Vec<u8>) -> Result<(), String>
-    pub fn remove_anchor(&self, key_id: &str) -> Result<(), String>
-    pub fn get_anchors(&self) -> Vec<TrustAnchor>
-    pub fn get_trusted_anchors(&self) -> Vec<TrustAnchor>
-    pub fn observe_dnskey_at_root(&self, key_tag: u16, algorithm: u8, public_key: &[u8], is_revoked: bool) -> Rfc5011Event
-    pub fn trust_anchor_check(&self, key_tag: u16, algorithm: u8, digest_type: u8, digest: &[u8], current_dnskey_keytags: Option<&[u16]>) -> Rfc5011Event
-    pub fn process_rfc5011_updates(&self) -> Vec<Rfc5011Event>
-    pub fn load_initial_anchors_from_file(&self, path: &str) -> Result<usize, String>
-}
-```
+Deleted by decision T5. The observation API (`observe_dnskey_at_root`,
+`trust_anchor_check`), the unused `start_rfc5011_updates` task, and the
+`TrustAnchorConfig` state machine are gone. `docs/RFC5011_TRUST_ANCHOR.md`
+records why and what replaced them (a static file plus
+`load_static_trust_anchors`).
 
 ### 4.6 DNSSEC Key Management (Phase 30: canonical in `synvoid-dnssec-keystore`)
 
@@ -806,10 +810,10 @@ Recursive Query (RecursiveDnsServer)
    │(full recurs.)│      │ (forwarder)  │      │Resolver      │
    │              │      │              │      │              │
    │- Root hints  │      │- Google DNS  │      │- Mesh nodes  │
-   │- Trust anchor│      │- Cloudflare  │      │              │
-   │- DNSSEC val  │      │- Upstream IPs│      │              │
-   │- RFC 5011    │      │              │      │              │
-   └──────────────┘      └──────────────┘      └──────────────┘
+   │- Static       │      │- Cloudflare  │      │              │
+   │  anchor file  │      │- Upstream IPs│      │              │
+   │- DNSSEC val   │      │- ports kept  │      │              │
+   └───────────────┘      └──────────────┘      └──────────────┘
                                   │
                                   ▼
                     ┌─────────────────────────────┐
@@ -822,8 +826,8 @@ Recursive Query (RecursiveDnsServer)
 The `HickoryRecursor` performs **full recursive resolution**:
 1. Loads root hints from file
 2. Follows delegation chain (root → TLD → authoritative)
-3. Optionally validates DNSSEC (`enable_dnssec` flag)
-4. Optionally performs RFC 5011 trust anchor updates
+3. Optionally validates DNSSEC (`enable_dnssec` flag) against the static
+   anchor file — there is no RFC 5011 anchor update step (decision T5)
 
 ```rust
 // resolver.rs:628 - HickoryRecursor::from_paths()
@@ -877,7 +881,7 @@ Zone Authoritative Response
 │ - DNSKEY record (public keys)    │
 │ - RRSIG records                  │
 │ - NSEC/NSEC3 (prove NXDOMAIN)    │
-│ dnssec_signing.rs:create_nsec*() │
+│ denial.rs: ZoneDenial index      │
 └───────────────────────────────────┘
 ```
 
@@ -907,8 +911,8 @@ DNS Response + RRSIG + DNSKEY + DS
 │   DS record in parent zone       │
 │         │ (digest match)        │
 │         ▼                        │
-│   Trust Anchor (root)            │
-│   or RFC 5011 managed key        │
+│   Trust Anchor (root, static     │
+│   file — no RFC 5011)            │
 └───────────────────────────────────┘
         │
         ▼
@@ -942,58 +946,24 @@ DNS Response + RRSIG + DNSKEY + DS
 | `canonical_rdata()` | `dnssec_validation.rs` | Canonical RDATA |
 | `verify_ds_digest()` | `dnssec_validation.rs` | DS digest verification |
 
-### 6.4 RFC 5011 Trust Anchor State Machine
+### 6.4 Trust anchors: static file, no RFC 5011
 
-```
-                    ┌──────────────────────────────────────────────┐
-  trust_point=0     │              trust_point != 0                  │
-  (newly configured)│              (previously Valid)                 │
-                    │                                              │
-                    │      ┌───────┐                               │
-                    │      │ Valid │◄──────────────────────────────┐│
-                    │      └───┬───┘                               ││
-                    │          │                                    ││
-                    │          │ (30-day observation, key in DNSKEY)││
-                    │          ▼                                    ││
-                    │   ┌────────────┐                              ││
-                    │   │  Pending   │────promote after 30 days──►  ││
-                    │   └────────────┘                              ││
-                    │          │                                    ││
-                    │          │ (CDS digest verified)               ││
-  ┌─────────────┐   │          ▼                                    ││
-  │    Seen     │───┼────►┌────────┐                                ││
-  │(in DNSKEY)   │   │      │Pending │                                ││
-  └─────────────┘   │      └───┬────┘                                ││
-                    │          │                                    ││
-                    │          │ (observation period complete)      ││
-                    │          ▼                                    ││
-                    │   (back to Valid──────────────────────────────┘│
-                    │          │                                    ││
-                    │          │ (REVOKE bit observed)               ││
-                    │          ▼                                    ││
-                    │   ┌──────────┐                                 ││
-                    └──►│ Revoked  │───── 30 days grace period ────► ││
-                        └──────────┘                                 ││
-                              │                                       ││
-                              │ (extended removal period)            ││
-                              ▼                                       ││
-                        ┌──────────┐                                  ││
-                        │ Removed  │───── extended days ────────────► ││
-                        └──────────┘                                 ││
-                              │                                       ││
-                              │ (purge from storage)                  ││
-                              ▼                                       ││
-                        ┌──────────┐                                  ││
-                        │  Missing │◄──── expired, not seen ────────► ││
-                        │ ( Valid  │                                  ││
-                        │  was 0)  │                                  ││
-                        └──────────┘                                  ││
-                             │                                        ││
-                             │ (re-appears, CDS digest matches)      ││
-                             └────────────────────────────────────────┘
+RFC 5011 automated anchor management is **not implemented** (decision T5) and
+the state machine (`Seen → Pending → Valid → Revoked → Removed`, with
+`trust_anchor_check()` gating promotion on a CDS digest) has been deleted.
+
+What exists instead:
+
+```rust
+// resolver.rs — the only anchor source
+pub fn load_static_trust_anchors(path: &Path)
+    -> Result<hickory_proto::dnssec::TrustAnchors, String>;
 ```
 
-**Key rule:** Keys with `trust_point == 0` (never Valid) require digest verification via `trust_anchor_check()` before entering Pending.
+`HickoryRecursor::from_paths` loads the file once and hands the anchors to
+hickory as `DnssecPolicy::ValidateWithStaticKey`. Replacing the file takes
+effect at the next process start; there is no database, no refresh interval and
+no revocation handling. See `docs/RFC5011_TRUST_ANCHOR.md`.
 
 ### 6.5 Supported Algorithms
 
@@ -1359,7 +1329,7 @@ Phase 3 closed the remaining gaps from the cache integration gap analysis:
 
 **Invalidation hardening:**
 - `invalidate_record()` now iterates all `qname_index` entries for the name, removing all keys matching the record type regardless of transport class, DNSSEC, ECS, or namespace dimensions.
-- DNSSEC key rollover (`start_key_rollover`/`complete_key_rollover`) now invalidates the full cache via `DnsServer` wrapper methods — rollover affects all zones.
+- DNSSEC key rotation is a manual runbook operation (phase 05 R4); there are no runtime `start_key_rollover`/`complete_key_rollover` wrapper methods, because they changed the keystore without republishing the served zone.
 - `DnsServer::delete_zone()` removes from in-memory `ShardedZoneStore` and invalidates cache.
 - `RpzManager::remove_zone_with_cache()` clears the full cache when an RPZ zone is removed.
 
@@ -1574,16 +1544,35 @@ Completed 2026-07-03. 390/390 DNS lib tests pass, 30/30 authoritative_negative t
 | Limits tests | 7 | `crates/synvoid-dns/src/limits.rs` |
 | DNS64 tests | 6 | `crates/synvoid-dns/src/dns64.rs` |
 
-### 11.3 DNSSEC Limitations (Partially Resolved in Phase 2)
+### 11.3 DNSSEC Status (Serving-Correctness Campaign Closed 2026-11-19)
 
-- **Signed NODATA/NXDOMAIN**: The signed negative response path uses `build_nxdomain_response`/`build_nodata_response` which assemble NSEC/NSEC3 + RRSIG records. These are now routed through `encode_rr` and `ResponseEnvelope`.
-- **NSEC3 closest-encloser**: Phase 2 fixed the next-closer NSEC3 emission (RFC 5155 §7.2.6) and corrected NODATA next_domain hash chain. SHA-256 base32 encoding works in practice but is not rigorously tested against RFC 5155 test vectors. **Full NSEC3 closest-encloser proofs remain deferred** — the corrective pass did not close this gap.
-- **RFC 5001 / RFC 5155 compliance**: Partially audited; core denial-of-existence paths tested. Full compliance audit deferred.
-- **DNSSEC signing**: Zones hold opaque sealed KSK/ZSK handles and generate RRSIGs via the keystore signer. Key lifecycle (including `load_keys_from_disk()` persistence, `0600` private files with atomic writes, fail-closed permission checks) lives in `synvoid-dnssec-keystore` (see `dnssec_keystore.md`); DNSSEC unit tests cover signing, validation, key management, and trust anchor lifecycle.
+- **Signed NODATA/NXDOMAIN**: `build_nxdomain_response`/`build_nodata_response`
+  emit the zone SOA **and its RRSIG**, then the denial proof and its RRSIG, all
+  through `encode_rr`.
+- **NSEC3**: the chain is built once from the canonical owner index; the hash is
+  `H(wire-name || salt)` with iterations applied, the owner is
+  `base32hex(hash).origin`, and the RDATA hash-length byte is the hash length
+  (20 for SHA-1). Closest-encloser, next-closer, and wildcard proofs are
+  selected from the sorted chain and pass the RFC 5155 Appendix A/B vectors in
+  `dnssec_denial_contract`.
+- **RFC 5011**: not implemented (decision T5). Static anchors are loaded from
+  `dns.recursive.trust_anchor_path`; `[dns.trust_anchors]` is a typed
+  `Unsupported`. See `docs/RFC5011_TRUST_ANCHOR.md`.
+- **Signatures**: RRSIGs cover canonical FQDNs over the whole RRset, the DNSKEY
+  RRset is KSK-signed, and a signing failure is SERVFAIL (never an unsigned
+  RRset). Verified in `dnssec_signature_contract`.
+- **External validation**: `delv 9.18.39` reports `fully validated` against a
+  KSK served by the test listener (`dns_external_interop`); `dig +dnssec` shows
+  the RRSIG. `ldns-verify-zone`/`named-checkzone` are not installed here.
 
 ### 11.4 External Interoperability
 
-External smoke tests (dig/drill/delv against a running server) were not run during this verification pass. They require a live server instance and external DNS client tools. These should be validated in a staging environment before production deployment.
+The phase-10 `dns_external_interop` lane starts a real loopback listener and
+runs `dig` (A/apex/wildcard/NODATA/NXDOMAIN/+dnssec/+bufsize=512/+tcp) and
+`delv` against it. `delv -a <anchor> +root=example.com` returned the answer and
+reported `fully validated`; a missing tool is reported as `SKIP`, never as
+validation. The conformance script can run the same checks against an external
+`DNS_CONFORMANCE_TARGET`.
 
 ### 11.5 Verification Commands
 
@@ -1621,7 +1610,13 @@ Milestone 1 is closed. The authoritative DNS wire/query correctness is verified:
 
 **What Milestone 1 is**: Authoritative wire-format correctness, query parsing, response assembly, SOA inclusion, flag semantics, DNSSEC NODATA/NXDOMAIN denial proof scaffolding, and truncation.
 
-**What Milestone 1 is not**: Full DNSSEC production hardening (NSEC3 closest-encloser proofs remain deferred — see §11.3), recursive resolver transport (now implemented with 109+ tests per Milestone 3 Phase 4), or external interoperability validation. The Milestone 3 Corrective Semantics Pass added production zone-validation gates (`validate_zone_for_activation`, `replace_zone_with_validation`), dynamic UPDATE re-validation, and strengthened verification-gate tests.
+**What Milestone 1 is not**: Recursive resolver transport (implemented later,
+see Milestone 3 Phase 4). The serving-correctness campaign (2026-11-19) closed
+the DNSSEC denial-proof and external-interop gaps; see
+`architecture/dns_serving_correctness_closeout.md`. The Milestone 3 Corrective
+Semantics Pass added production zone-validation gates
+(`validate_zone_for_activation`, `replace_zone_with_validation`), dynamic
+UPDATE re-validation, and strengthened verification-gate tests.
 
 ---
 
@@ -1798,7 +1793,7 @@ Shutdown propagates through three channels:
 **Socket cleanup**: When the UDP/TCP listener tasks exit their `loop` blocks, the `UdpSocket` and `TcpListener` are dropped, releasing the port for reuse by a subsequent server instance.
 
 **Fire-and-forget task cleanup**: The following background tasks are cleaned up via shutdown channels:
-- **DNSSEC key rotation** (`start_key_rotation_task`): Runs on a `tokio::time::interval`. When the `DnsServer` is dropped, the `Arc<RwLock<DnsSecKeyManager>>` is released. The task itself is not explicitly cancelled (it runs until the Tokio runtime shuts down), but it holds no locks or resources that would prevent port reuse.
+- **DNSSEC key rotation**: There is no rotation task. Rotation is a manual runbook operation (`docs/dns-dnssec-architecture.md`); the zone's key handles are reload-only, so no background task can change the keystore's active key without republishing it.
 - **Recursive server**: Started as an `Arc<RecursiveDnsServer>` with its own internal shutdown. When the `DnsServer` drops, the recursive server's `Arc` count drops.
 - **Coalescer cleanup** (`start_coalescer_cleanup_task`): Runs on a `tokio::time::interval` with a `watch::Receiver`. When `shutdown_watcher_tx` sends `true`, the task exits its loop.
 
@@ -2071,7 +2066,7 @@ Phase 5 is a verification-only phase. It confirms that transport/runtime, config
 | ECS client subnet | Partial | Full prefix routing not implemented |
 | DoQ bind address | Closed (Phase 45) | Honored via `doq_bind_addr()`, validated before startup |
 | Recursive persistent TCP | Deferred | `handle_tcp_connection` still one-query-per-connection |
-| Full DNSSEC production validation | Partial | NSEC3 closest-encloser fixed; key lifecycle hardened; 97 tests. Full RFC 5001/5155 compliance audit deferred. |
+| Full DNSSEC production validation | Closed (2026-11-19 campaign) | FQDN-signed RRSIGs, KSK-signed DNSKEY, signed SOA, zone-derived NSEC/NSEC3 (RFC 5155 vectors), `delv` fully validated. See `architecture/dns_serving_correctness_closeout.md`. |
 | RPZ, Dynamic Update, Notify, IXFR, Trust Anchors, Prefetch, Anycast, Padding, QNAME Privacy | Deferred, activation rejected | No runtime consumer; `DnsConfig::validate()` rejects enabling with typed paths |
 
 ### Verification Commands
@@ -2290,7 +2285,7 @@ Phase 2 addressed critical DNSSEC correctness bugs, hardened key lifecycle manag
 | `dnssec_key_mgmt.rs` | 0 | 22 |
 | `dnssec_signing.rs` | 0 | 18 |
 | `dnssec_validation.rs` | 0 | 20 |
-| `trust_anchor.rs` | 24 | 37 |
+| ~~`trust_anchor.rs`~~ | 24 | *(deleted, T5)* |
 | **Total DNSSEC** | ~23 | **97** |
 
 ### Verification Commands

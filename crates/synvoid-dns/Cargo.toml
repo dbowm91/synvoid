@@ -68,6 +68,9 @@ uuid = { version = "1", features = ["v4"] }
 tempfile = "3"
 toml = "0.8"
 proptest = "1.5"
+# Phase 05: the key-rotation contract test uses paused tokio time to prove no
+# automatic rotation task runs (`start_paused`, `tokio::time::advance`).
+tokio = { version = "1", features = ["test-util"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 # Phase 137: the ALPN evidence suite performs real TLS handshakes against the
 # encrypted DNS listeners, which needs a certificate. `rcgen` generates it in
@@ -79,6 +82,13 @@ rcgen = "0.13"
 [[bench]]
 name = "cache_bench"
 harness = false
+
+# Phase 08: the mesh trust contract is a `mesh`-feature suite. Declaring
+# `required-features` makes a run without the feature report the target as
+# skipped rather than building an empty, green binary.
+[[test]]
+name = "dns_mesh_trust_contract"
+required-features = ["mesh"]
 
 [[bench]]
 name = "wire_bench"

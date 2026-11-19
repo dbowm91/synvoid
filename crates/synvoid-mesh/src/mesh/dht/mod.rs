@@ -566,6 +566,24 @@ pub struct DnsDomainRegistration {
     pub registered_at: u64,
 }
 
+/// A DNS domain registration together with the DHT record metadata needed to
+/// verify it.
+///
+/// [`DnsDomainRegistration`] is the signed *value*; the publisher, signature,
+/// creation time, and TTL live on the enclosing `DhtRecord`. DNS needs all of
+/// them to ask the provider "is this registration authentic?", so the store
+/// surfaces them together rather than dropping the record half.
+#[derive(Debug, Clone)]
+pub struct DnsDomainRegistrationRecord {
+    pub domain: String,
+    pub origin_node_id: String,
+    pub ip_addresses: Vec<String>,
+    pub publisher_id: String,
+    pub signature: Vec<u8>,
+    pub created_at: u64,
+    pub ttl_seconds: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Archive, RkyvSerialize, RkyvDeserialize)]
 pub struct AnycastNode {
     pub node_id: String,

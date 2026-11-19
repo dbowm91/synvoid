@@ -17,6 +17,9 @@ struct InnerCookieServer {
     secret_key: [u8; 32],
     cookies: RwLock<lru_time_cache::LruCache<String, CookieEntry>>,
     enable_validation: AtomicBool,
+    /// `dns.settings.require_cookie`: a UDP query without a valid server
+    /// cookie is answered BADCOOKIE instead of the question.
+    require_cookie: AtomicBool,
 }
 
 struct CookieEntry {
@@ -33,6 +36,7 @@ impl DnsCookieServer {
                 secret_key,
                 cookies: RwLock::new(cookies),
                 enable_validation: AtomicBool::new(true),
+                require_cookie: AtomicBool::new(false),
             }),
         })
     }
@@ -46,6 +50,20 @@ impl DnsCookieServer {
             .enable_validation
             .store(enable, Ordering::Relaxed);
         self
+    }
+
+    /// Require a valid server cookie on UDP queries.
+    ///
+    /// Default `false`: cookies are computed and validated but not enforced.
+    /// When enabled, the query path answers BADCOOKIE (extended RCODE 23) with
+    /// a fresh server cookie instead of the answer.
+    pub fn with_required(self, require: bool) -> Self {
+        self.inner.require_cookie.store(require, Ordering::Relaxed);
+        self
+    }
+
+    pub fn require_cookie(&self) -> bool {
+        self.inner.require_cookie.load(Ordering::Relaxed)
     }
 
     pub fn generate_server_cookie(&self, client_ip: IpAddr, client_cookie: &[u8]) -> Vec<u8> {

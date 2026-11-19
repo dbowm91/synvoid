@@ -1,6 +1,6 @@
 # Phase 06 Plan: Data Plane Hardening
 
-Status: **PROPOSED** (not started; findings verified at `4add005f`).
+Status: **PARTIAL** — 06a and 06b implemented in `ea638ff9`; 06c (edge response limits and inbound connection cap) not started.
 
 Registered in: `plans/roadmap.md`.
 Campaign: `plans/mesh_trust_boundaries_roadmap.md`.

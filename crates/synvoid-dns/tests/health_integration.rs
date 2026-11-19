@@ -1,9 +1,9 @@
 //! Integration tests for `DnsHealthChecker` wiring.
 //!
-//! These tests verify that the health checker state actually reflects runtime
-//! configuration, not just manually-set test values. Each test constructs a
+//! These tests verify that the health checker reports what the runtime
+//! **realized**, not what configuration requested. Each test constructs a
 //! `DnsServer` with a specific config and asserts that the resulting
-//! `DnsHealthStatus` snapshot matches the intended operational state.
+//! `DnsHealthStatus` snapshot separates the two.
 
 mod support;
 
@@ -29,6 +29,42 @@ fn server_with_recursive(
     runtime.authoritative = authoritative;
     runtime.recursive = recursive;
     DnsServer::new(runtime, None, None)
+}
+
+/// R9: a forwarder that is trusted to validate is `delegated`, never
+/// `enabled`. Reporting local validation for a resolver that performs none is
+/// the health-truth failure this field exists to prevent.
+#[test]
+fn dnssec_validation_reports_delegated_for_a_forwarder() {
+    use synvoid_dns::health::DnssecValidationHealth;
+
+    let mut forwarder = support::recursive_runtime();
+    forwarder.dnssec_validation = true;
+    forwarder.performs_local_dnssec_validation = false;
+    let server = server_with_recursive(AuthoritativeRuntimeBuilder::new().build(), forwarder);
+    assert_eq!(
+        server.health_checker().status().dnssec_state.validation,
+        DnssecValidationHealth::Delegated,
+        "a forwarder delegates validation"
+    );
+
+    let mut recursor = support::recursive_runtime();
+    recursor.dnssec_validation = true;
+    recursor.performs_local_dnssec_validation = true;
+    let server = server_with_recursive(AuthoritativeRuntimeBuilder::new().build(), recursor);
+    assert_eq!(
+        server.health_checker().status().dnssec_state.validation,
+        DnssecValidationHealth::Enabled,
+        "a local validating recursor reports enabled"
+    );
+
+    let mut disabled = support::recursive_runtime();
+    disabled.dnssec_validation = false;
+    let server = server_with_recursive(AuthoritativeRuntimeBuilder::new().build(), disabled);
+    assert_eq!(
+        server.health_checker().status().dnssec_state.validation,
+        DnssecValidationHealth::Disabled
+    );
 }
 
 #[test]
@@ -103,19 +139,28 @@ fn recursive_disabled_marks_recursive_disabled() {
 }
 
 #[test]
-fn recursive_enabled_marks_recursive_healthy_initially() {
-    // With recursive.enabled = true and no actual recursive server
-    // initialized, the optimistic default in init_health_state is Healthy.
+fn recursive_enabled_is_not_reported_healthy_before_start() {
+    // Configured recursion is not a running resolver. Before this contract the
+    // constructor set `recursive_healthy` from `recursive.enabled`, so a
+    // listener that never started looked healthy.
     let server = server_with_recursive(
         AuthoritativeRuntimeBuilder::new().build(),
         support::recursive_runtime(),
     );
     let status = server.health_checker().status();
-    assert!(matches!(status.recursive_state, RecursiveHealth::Healthy));
-    assert!(!matches!(
-        status.recursive_state,
-        RecursiveHealth::Degraded { .. }
-    ));
+    assert!(
+        matches!(status.recursive_state, RecursiveHealth::Degraded { .. }),
+        "configured-but-not-started recursion must be degraded, got {:?}",
+        status.recursive_state
+    );
+    assert!(
+        status.capabilities.recursive.config_requested,
+        "the config asked for recursion"
+    );
+    assert!(
+        !status.capabilities.recursive.realized,
+        "no recursive listener exists yet"
+    );
 }
 
 #[test]
@@ -139,7 +184,7 @@ fn circuit_breaker_open_marks_recursive_degraded() {
 }
 
 #[test]
-fn encrypted_transport_flags_match_config() {
+fn encrypted_transport_flags_report_binding_not_config() {
     let server = server_with(
         AuthoritativeRuntimeBuilder::new()
             .dot(8853)
@@ -148,13 +193,24 @@ fn encrypted_transport_flags_match_config() {
     );
     let status = server.health_checker().status();
     let et = &status.encrypted_transport_state;
-    assert!(et.dot_enabled);
-    assert!(et.doh_enabled);
+    assert!(
+        !et.dot_enabled,
+        "configured DoT is not a bound listener; the flag is set by the bind"
+    );
+    assert!(
+        !et.doh_enabled,
+        "configured DoH is not a bound listener; the flag is set by the bind"
+    );
     assert!(!et.doq_enabled);
+    assert!(status.capabilities.dot.config_requested);
+    assert!(status.capabilities.doh.config_requested);
+    assert!(!status.capabilities.dot.realized);
+    assert!(!status.capabilities.doh.realized);
+    assert!(!status.capabilities.doq.config_requested);
 }
 
 #[test]
-fn transfer_update_flags_match_config() {
+fn transfer_update_flags_report_realized_handlers() {
     let server = server_with(
         AuthoritativeRuntimeBuilder::new()
             .ixfr(true)
@@ -164,10 +220,38 @@ fn transfer_update_flags_match_config() {
     );
     let status = server.health_checker().status();
     let tu = &status.transfer_update_state;
-    assert!(tu.axfr_enabled);
-    assert!(tu.ixfr_enabled);
-    assert!(tu.update_enabled);
-    assert!(tu.tsig_required);
+    assert!(
+        !tu.axfr_enabled,
+        "no transfer handler was attached; AXFR is not realized"
+    );
+    assert!(
+        !tu.ixfr_enabled,
+        "no transfer handler was attached; IXFR is not realized"
+    );
+    assert!(
+        !tu.update_enabled,
+        "no update handler was attached; UPDATE is not realized"
+    );
+    assert_eq!(
+        status.capabilities.ixfr,
+        synvoid_dns::health::CapabilityRealization {
+            realized: false,
+            config_requested: true,
+        },
+        "the IXFR toggle was configured but no handler serves it"
+    );
+    assert_eq!(
+        status.capabilities.update,
+        synvoid_dns::health::CapabilityRealization {
+            realized: false,
+            config_requested: true,
+        },
+        "dynamic update was configured but no handler serves it"
+    );
+    assert!(
+        tu.tsig_required,
+        "TSIG policy is configuration, not a runtime artifact"
+    );
 }
 
 #[test]
@@ -197,7 +281,7 @@ fn dnssec_disabled_initially() {
 }
 
 #[test]
-fn dnssec_enabled_reflected() {
+fn dnssec_enabled_without_a_signing_zone_is_not_reported_as_signing() {
     let mut runtime = support::dns_runtime();
     runtime.dnssec = support::runtime_config::dnssec_enabled_runtime(
         std::env::temp_dir().join("synvoid-health-test-keys"),
@@ -205,7 +289,16 @@ fn dnssec_enabled_reflected() {
     );
     let server = DnsServer::new(runtime, None, None);
     let status = server.health_checker().status();
-    assert!(status.dnssec_state.signing_enabled);
+    assert!(
+        !status.dnssec_state.signing_enabled,
+        "DNSSEC enabled in config with no zone holding a ZSK must not claim \
+         signing; the flag is set by loaded key handles, not by the config bit"
+    );
+    assert!(
+        status.capabilities.dnssec_signing.config_requested,
+        "the config asked for DNSSEC signing"
+    );
+    assert!(!status.capabilities.dnssec_signing.realized);
 }
 
 #[test]
@@ -289,6 +382,7 @@ fn _type_asserts() {
             keys_loaded: 0,
             last_key_rotation: None,
             signing_enabled: false,
+            validation: synvoid_dns::health::DnssecValidationHealth::Disabled,
         },
         encrypted_transport_state: EncryptedTransportHealth {
             dot_enabled: false,
@@ -302,6 +396,7 @@ fn _type_asserts() {
             update_enabled: false,
             tsig_required: false,
         },
+        capabilities: DnsHealthChecker::new().capabilities(),
         uptime_seconds: 0,
         last_zone_load_time: None,
         last_zone_load_error: None,

@@ -78,6 +78,11 @@ impl MeshDnsRegistry {
         let origin = RegisteredOriginNode {
             node_id: registration.node_id.clone(),
             domains: vec![registration.domain.clone()],
+            // The live registration is the origin's own declaration; it is the
+            // only writer of `declared_zones`, which is what authorizes the
+            // node's domains against a DHT-sourced registration.
+            declared_zones: vec![registration.domain.clone()],
+            ip_addresses: registration.ip_addresses.clone(),
             geo: derived_geo,
             healthy: registration.healthy,
             capacity: registration.capacity,
@@ -332,6 +337,8 @@ impl MeshDnsRegistry {
                     let origin = RegisteredOriginNode {
                         node_id: reg.node_id.clone(),
                         domains: vec![reg.domain.clone()],
+                        declared_zones: vec![reg.domain.clone()],
+                        ip_addresses: reg.ip_addresses.clone(),
                         geo: derived_geo,
                         healthy: reg.healthy,
                         capacity: reg.capacity,

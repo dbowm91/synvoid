@@ -61,11 +61,23 @@ pub struct AdvertisedAnycastNode {
 }
 
 /// A DNS-owned projection of an origin-domain advertisement.
+///
+/// The signature fields exist for the same reason
+/// [`AdvertisedAnycastRecord`] carries them: the provider must be able to
+/// rebuild and verify the record it signed, and DNS must be able to ask
+/// whether the advertisement is authentic without naming a mesh type. A
+/// registration whose `publisher_id` does not equal `origin_node_id` is a
+/// different defect — a valid signature by a node other than the one claiming
+/// the domain — and the DNS layer enforces that binding itself.
 #[derive(Debug, Clone)]
 pub struct AdvertisedDomainRegistration {
     pub domain: String,
     pub origin_node_id: String,
     pub ip_addresses: Vec<String>,
+    pub publisher_id: String,
+    pub signature: Vec<u8>,
+    pub created_at: u64,
+    pub ttl_seconds: u64,
 }
 
 /// The fields of an advertised anycast record, exactly as DNS reads them.
@@ -117,6 +129,29 @@ pub trait DhtRecordStore: Send + Sync {
     /// "not authenticated" rather than inferring trust from absence.
     fn is_anycast_advertisement_authentic(&self, advertisement: &AdvertisedAnycastRecord) -> bool;
 
+    /// Whether a domain registration is authentic.
+    ///
+    /// Same contract as [`Self::is_anycast_advertisement_authentic`]: an
+    /// unsigned registration and a provider without a verifier both return
+    /// `false`. Composition may return `false` for every registration until
+    /// mesh Phase 04b binds a DHT record's signer to its `source_node_id`;
+    /// that is the intended fail-closed posture, not a stub to be papered over
+    /// with a second signature scheme.
+    fn is_domain_registration_authentic(&self, registration: &AdvertisedDomainRegistration)
+        -> bool;
+
+    /// Whether the mesh peer carries an org-key claim authorizing this
+    /// registration's domain.
+    ///
+    /// Deliberately separate from authenticity: a signature proves who
+    /// advertised, not that the advertiser may serve the name. The default is
+    /// `false` — default deny — so a provider that has no claim surface (mesh
+    /// today) cannot accidentally authorize anything. Composition overrides
+    /// this only when the mesh peer actually presents a verified claim.
+    fn has_domain_authorization_claim(&self, _registration: &AdvertisedDomainRegistration) -> bool {
+        false
+    }
+
     fn store_dns_domain_registration(
         &self,
         domain: String,
@@ -165,6 +200,7 @@ mod tests {
         assert!(store.all_anycast_advertisements().is_empty());
         assert!(store.anycast_nodes_for_zone("example.com").is_empty());
         assert!(!store.is_anycast_advertisement_authentic(&unauthenticated()));
+        assert!(!store.is_domain_registration_authentic(&unauthenticated_registration()));
     }
 
     /// The locator trait is `async`; dyn-safety under `#[async_trait]` is the
@@ -191,6 +227,12 @@ mod tests {
         fn is_anycast_advertisement_authentic(
             &self,
             _advertisement: &AdvertisedAnycastRecord,
+        ) -> bool {
+            false
+        }
+        fn is_domain_registration_authentic(
+            &self,
+            _registration: &AdvertisedDomainRegistration,
         ) -> bool {
             false
         }
@@ -240,6 +282,20 @@ mod tests {
             ttl_seconds: 600,
             source_node_id: "edge-1".to_string(),
             signer_public_key: None,
+        }
+    }
+
+    /// The domain-registration shape carries the same signature material; a
+    /// store with no verifier must answer `false`, never infer trust.
+    fn unauthenticated_registration() -> AdvertisedDomainRegistration {
+        AdvertisedDomainRegistration {
+            domain: "example.com".to_string(),
+            origin_node_id: "origin-1".to_string(),
+            ip_addresses: vec!["203.0.113.10".to_string()],
+            publisher_id: "origin-1".to_string(),
+            signature: Vec::new(),
+            created_at: 1,
+            ttl_seconds: 600,
         }
     }
 }

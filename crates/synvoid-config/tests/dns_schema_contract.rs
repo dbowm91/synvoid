@@ -76,6 +76,7 @@ fn test_recursive_dns_config_validation() {
 
     let config = RecursiveDnsConfig {
         enabled: true,
+        allow_unvalidated_forwarding: true,
         upstream_provider: RecursiveUpstreamProvider::Custom,
         upstream_servers: vec![],
         ..Default::default()
@@ -165,6 +166,7 @@ fn test_recursive_dns_config_validation_timeout() {
 
     let config = RecursiveDnsConfig {
         enabled: true,
+        allow_unvalidated_forwarding: true,
         query_timeout_secs: 0,
         ..Default::default()
     };
@@ -467,6 +469,7 @@ fn cname_depth_limit_enforced() {
     // Setting max_cname_depth = 0 means unlimited (valid)
     let config = RecursiveDnsConfig {
         enabled: true,
+        allow_unvalidated_forwarding: true,
         max_cname_depth: 0,
         ..Default::default()
     };
@@ -478,6 +481,7 @@ fn cname_depth_limit_enforced() {
     // Setting max_cname_depth = 1 is valid (very restrictive)
     let config = RecursiveDnsConfig {
         enabled: true,
+        allow_unvalidated_forwarding: true,
         max_cname_depth: 1,
         ..Default::default()
     };
@@ -495,6 +499,7 @@ fn recursive_config_validation() {
     // Valid config
     let mut config = RecursiveDnsConfig {
         enabled: true,
+        allow_unvalidated_forwarding: true,
         ..Default::default()
     };
     assert!(
@@ -567,6 +572,7 @@ fn recursive_config_rejects_wildcard_bind() {
     use synvoid_config::dns::RecursiveDnsConfig;
     let mut cfg = RecursiveDnsConfig {
         enabled: true,
+        allow_unvalidated_forwarding: true,
         bind_address: "0.0.0.0".to_string(),
         ..Default::default()
     };
@@ -699,6 +705,7 @@ fn test_recursive_mode_different_bind_address() {
 
     let recursive_config = RecursiveDnsConfig {
         enabled: true,
+        allow_unvalidated_forwarding: true,
         bind_address: "127.0.0.1".to_string(),
         port: 1053,
         ..Default::default()
@@ -869,6 +876,7 @@ fn test_invalid_bind_address_rejected() {
 fn test_recursive_custom_upstream_requires_servers() {
     let mut config = RecursiveDnsConfig {
         enabled: true,
+        allow_unvalidated_forwarding: true,
         upstream_provider: RecursiveUpstreamProvider::Custom,
         ..Default::default()
     };
@@ -885,6 +893,7 @@ fn test_recursive_custom_upstream_requires_servers() {
 fn test_recursive_query_timeout_must_be_positive() {
     let config = RecursiveDnsConfig {
         enabled: true,
+        allow_unvalidated_forwarding: true,
         query_timeout_secs: 0,
         ..Default::default()
     };
@@ -900,6 +909,7 @@ fn test_recursive_query_timeout_must_be_positive() {
 fn test_recursive_max_concurrent_must_be_positive() {
     let config = RecursiveDnsConfig {
         enabled: true,
+        allow_unvalidated_forwarding: true,
         max_concurrent_queries: 0,
         ..Default::default()
     };
@@ -915,6 +925,7 @@ fn test_recursive_max_concurrent_must_be_positive() {
 fn test_recursive_negative_ttl_cannot_exceed_max() {
     let mut config = RecursiveDnsConfig {
         enabled: true,
+        allow_unvalidated_forwarding: true,
         ..Default::default()
     };
     config.cache.negative_ttl_secs = 1000;
@@ -1070,6 +1081,7 @@ fn test_default_config_recursive_disabled() {
 fn test_recursive_open_resolver_guard() {
     let mut config = synvoid_config::dns::RecursiveDnsConfig {
         enabled: true,
+        allow_unvalidated_forwarding: true,
         ..Default::default()
     };
 
@@ -1138,6 +1150,7 @@ fn test_recursive_client_acl_empty_allows_all() {
 fn test_recursive_client_acl_invalid_cidr_rejected() {
     let mut config = RecursiveDnsConfig {
         enabled: true,
+        allow_unvalidated_forwarding: true,
         ..Default::default()
     };
     config.client_acl = Some(RecursiveClientAcl {
@@ -1213,6 +1226,7 @@ fn test_recursive_client_acl_action_reject_denies_non_matching() {
 fn test_recursive_client_acl_invalid_action_rejected() {
     let mut config = RecursiveDnsConfig {
         enabled: true,
+        allow_unvalidated_forwarding: true,
         ..Default::default()
     };
     config.client_acl = Some(RecursiveClientAcl {
@@ -1264,6 +1278,7 @@ fn test_recursive_client_acl_multiple_cidrs() {
 fn test_recursive_client_acl_none_allows_all() {
     let config = RecursiveDnsConfig {
         enabled: true,
+        allow_unvalidated_forwarding: true,
         client_acl: None,
         ..Default::default()
     };
@@ -1318,6 +1333,7 @@ fn test_max_cname_depth_config_default() {
 fn test_max_cname_depth_zero_means_unlimited() {
     let config = RecursiveDnsConfig {
         enabled: true,
+        allow_unvalidated_forwarding: true,
         max_cname_depth: 0,
         ..Default::default()
     };
@@ -1337,6 +1353,7 @@ fn test_circuit_breaker_config_default() {
 fn test_circuit_breaker_config_validation_failure_threshold_zero() {
     let mut config = RecursiveDnsConfig {
         enabled: true,
+        allow_unvalidated_forwarding: true,
         ..Default::default()
     };
     config.circuit_breaker.failure_threshold = 0;
@@ -1349,6 +1366,7 @@ fn test_circuit_breaker_config_validation_failure_threshold_zero() {
 fn test_circuit_breaker_config_validation_success_threshold_zero() {
     let mut config = RecursiveDnsConfig {
         enabled: true,
+        allow_unvalidated_forwarding: true,
         ..Default::default()
     };
     config.circuit_breaker.success_threshold = 0;
@@ -1386,6 +1404,7 @@ fn test_max_per_client_queries_default() {
 fn test_max_recursion_depth_zero_means_unlimited() {
     let config = RecursiveDnsConfig {
         enabled: true,
+        allow_unvalidated_forwarding: true,
         max_recursion_depth: 0,
         ..Default::default()
     };
@@ -1398,6 +1417,7 @@ fn test_max_recursion_depth_zero_means_unlimited() {
 fn test_max_per_client_queries_zero_means_unlimited() {
     let config = RecursiveDnsConfig {
         enabled: true,
+        allow_unvalidated_forwarding: true,
         max_per_client_queries: 0,
         ..Default::default()
     };

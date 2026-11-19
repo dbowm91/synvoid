@@ -102,6 +102,8 @@ pub struct AuthoritativeRuntimeConfig {
     pub dynamic_update: DynamicUpdateRuntimeConfig,
     /// Zone-transfer runtime policy.
     pub zone_transfer: ZoneTransferRuntimeConfig,
+    /// Require a valid RFC 7873 server cookie on UDP queries.
+    pub require_cookie: bool,
     /// Anycast activation guard.
     pub anycast: AnycastRuntimeConfig,
 }
@@ -214,6 +216,10 @@ pub struct ServeStaleRuntimeConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LimitsRuntimeConfig {
     pub max_tcp_connections: usize,
+    /// Cap on concurrently accepted connections per encrypted listener
+    /// (DoT, DoH, DoQ). Unlike plain TCP, the encrypted listeners had no cap
+    /// before phase 03 (audit D33).
+    pub max_encrypted_connections: usize,
     pub max_concurrent_queries: usize,
     pub max_query_size: usize,
     pub max_response_size: usize,
@@ -1106,6 +1112,7 @@ pub(crate) mod test_fixtures {
             },
             limits: LimitsRuntimeConfig {
                 max_tcp_connections: 100,
+                max_encrypted_connections: 100,
                 max_concurrent_queries: 1_000,
                 max_query_size: 65_535,
                 max_response_size: 65_535,
@@ -1156,6 +1163,7 @@ pub(crate) mod test_fixtures {
                 ixfr_fallback_to_axfr: true,
                 require_tsig: false,
             },
+            require_cookie: false,
             anycast: AnycastRuntimeConfig { enabled: false },
         }
     }

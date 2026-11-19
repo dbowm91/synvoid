@@ -5,7 +5,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use rusqlite::{params, Connection};
 
-use crate::server::{DnsZoneRecord, RecordType, Zone};
+use crate::server::{DnsZoneRecord, RecordType, SerialPolicy, Zone};
 
 pub struct ZoneStore {
     conn: Arc<RwLock<Connection>>,
@@ -154,31 +154,21 @@ impl ZoneStore {
             let mut zone_records = HashMap::new();
             let mut corrupt_count = 0;
             for (name, rt, value, ttl, priority) in records {
-                let record_type = match rt {
-                    1 => RecordType::A,
-                    28 => RecordType::AAAA,
-                    5 => RecordType::CNAME,
-                    15 => RecordType::MX,
-                    16 => RecordType::TXT,
-                    2 => RecordType::NS,
-                    6 => RecordType::SOA,
-                    33 => RecordType::SRV,
-                    12 => RecordType::PTR,
-                    39 => RecordType::CNAME,
-                    43 => RecordType::DS,
-                    257 => RecordType::CAA,
-                    _ => {
-                        corrupt_count += 1;
-                        tracing::warn!(
-                            zone = %origin,
-                            name = %name,
-                            record_type_raw = rt,
-                            "Skipping corrupt record with unknown type {}",
-                            rt
-                        );
-                        continue;
-                    }
-                };
+                // R4: the stored type is the wire type. The old table mapped
+                // 39 (DNAME) to CNAME and sent every other unlisted type to 0,
+                // which lost the record on the next load.
+                if rt <= 0 || rt > u16::MAX as i32 {
+                    corrupt_count += 1;
+                    tracing::warn!(
+                        zone = %origin,
+                        name = %name,
+                        record_type_raw = rt,
+                        "Skipping corrupt record with out-of-range type {}",
+                        rt
+                    );
+                    continue;
+                }
+                let record_type = RecordType::from(rt as u16);
 
                 let record = DnsZoneRecord {
                     name: name.clone(),
@@ -204,7 +194,12 @@ impl ZoneStore {
             }
 
             let mut zone = Zone::new(origin.clone());
-            zone.records = zone_records;
+            // R4: install through the single writer, which normalizes the
+            // persisted owner keys, rebuilds the owner index, and restores the
+            // zone serial from the SOA (an IXFR comparison must not start
+            // from 0).
+            zone.commit_records(zone_records, SerialPolicy::AdoptSoa)
+                .map_err(|reason| format!("Zone {origin} (from store): {reason}"))?;
             zones.insert(origin.clone(), zone);
         }
 
@@ -222,6 +217,18 @@ impl ZoneStore {
             .unchecked_transaction()
             .map_err(|e| format!("Failed to begin transaction: {}", e))?;
 
+        // Persist the zone row before its records. `zones.origin` is UNIQUE,
+        // so this is an upsert: the first save of a loaded zone creates the
+        // row, a later save refreshes `updated_at` (R4: a zone can actually be
+        // written, not only read).
+        let now = crate::time::unix_timestamp_secs();
+        tx.execute(
+            "INSERT INTO zones (origin, created_at, updated_at) VALUES (?, ?, ?)
+             ON CONFLICT(origin) DO UPDATE SET updated_at = excluded.updated_at",
+            params![zone, now, now],
+        )
+        .map_err(|e| format!("Failed to upsert zone row: {}", e))?;
+
         let zone_id: i64 = tx
             .query_row(
                 "SELECT id FROM zones WHERE origin = ?",
@@ -234,20 +241,10 @@ impl ZoneStore {
             .map_err(|e| format!("Failed to delete old records: {}", e))?;
 
         for (name, record_type, value, ttl, priority) in records {
-            let rt = match record_type {
-                RecordType::A => 1,
-                RecordType::AAAA => 28,
-                RecordType::CNAME => 5,
-                RecordType::MX => 15,
-                RecordType::TXT => 16,
-                RecordType::NS => 2,
-                RecordType::SOA => 6,
-                RecordType::SRV => 33,
-                RecordType::PTR => 12,
-                RecordType::DS => 43,
-                RecordType::CAA => 257,
-                _ => 0,
-            };
+            // R4: round-trip the record type as its wire value. DNAME (39)
+            // must not load as CNAME, and no supported type may be written as
+            // 0 and dropped as corrupt on the next load.
+            let rt = u16::from(*record_type);
 
             tx.execute(
                 "INSERT INTO records (zone_id, name, record_type, value, ttl, priority) VALUES (?, ?, ?, ?, ?, ?)",

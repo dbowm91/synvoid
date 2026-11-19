@@ -226,10 +226,16 @@ impl UnifiedServerResources {
                 })?;
             }
 
-            // Wire up zone transfer configuration
+            // Wire up zone transfer configuration.
+            //
+            // `require_tsig` without a verifier is a configuration that
+            // cannot authenticate, so the handler refuses to be built and
+            // startup fails: a presence check that accepts any TSIG header is
+            // worse than no TSIG at all.
             if !dns_cfg.settings.allow_transfer.is_empty()
                 || dns_cfg.settings.allow_wildcard_transfer
             {
+                use crate::dns::transfer::TransferAcl;
                 use crate::dns::tsig::TsigVerifier;
 
                 let tsig_verifier = if !tsig_keys.is_empty() {
@@ -244,15 +250,23 @@ impl UnifiedServerResources {
                     None
                 };
 
-                dns_server = dns_server.with_zone_transfer_config(
-                    dns_cfg.settings.allow_transfer.clone(),
-                    dns_cfg.settings.allow_wildcard_transfer,
-                    dns_cfg.settings.wildcard_transfer_requires_tsig,
-                    dns_cfg.settings.ixfr_enabled,
-                    dns_cfg.settings.ixfr_fallback_to_axfr,
-                    tsig_verifier,
-                    dns_cfg.settings.require_tsig,
-                );
+                let acl = TransferAcl::from_entries(&dns_cfg.settings.allow_transfer);
+
+                dns_server = dns_server
+                    .with_zone_transfer_config(
+                        acl,
+                        dns_cfg.settings.allow_wildcard_transfer,
+                        dns_cfg.settings.wildcard_transfer_requires_tsig,
+                        dns_cfg.settings.ixfr_enabled,
+                        dns_cfg.settings.ixfr_fallback_to_axfr,
+                        tsig_verifier,
+                        dns_cfg.settings.require_tsig,
+                    )
+                    .map_err(|e| {
+                        UnifiedServerResourceError::Dns(format!(
+                            "zone transfer configuration rejected: {e}"
+                        ))
+                    })?;
             }
 
             tracing::info!(

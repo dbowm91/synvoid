@@ -254,7 +254,56 @@ pub const UPDATE_RCODE_NXRRSET: u8 = 8;
 pub const UPDATE_RCODE_NOTAUTH: u8 = 9;
 pub const UPDATE_RCODE_NOTZONE: u8 = 10;
 
-pub fn build_error_response(query: &[u8], rcode: u8) -> Option<Vec<u8>> {
+/// Copy the single question section of `query` verbatim.
+///
+/// Returns `None` when the header does not declare exactly one question, the
+/// name is truncated or contains a compression pointer, a label exceeds 63
+/// octets, or QTYPE/QCLASS are missing. Callers use this to decide QDCOUNT:
+/// it is never safe to write question bytes without also counting them.
+pub fn question_section(query: &[u8]) -> Option<&[u8]> {
+    if query.len() < 12 {
+        return None;
+    }
+    if u16::from_be_bytes([query[4], query[5]]) != 1 {
+        return None;
+    }
+
+    let mut pos = 12;
+    loop {
+        let len = *query.get(pos)? as usize;
+        if len == 0 {
+            pos += 1;
+            break;
+        }
+        // The question name is never compressed (RFC 1035 §4.1.2).
+        if (len & 0xC0) == 0xC0 || len > 63 {
+            return None;
+        }
+        let next = pos.checked_add(1 + len)?;
+        if next > query.len() {
+            return None;
+        }
+        pos = next;
+    }
+
+    let end = pos.checked_add(4)?; // QTYPE + QCLASS
+    if end > query.len() {
+        return None;
+    }
+    Some(&query[12..end])
+}
+
+/// Build an error response, optionally carrying an already-encoded OPT RR.
+///
+/// `QDCOUNT` is `1` exactly when the question section was copied, so a client
+/// never sees a count that disagrees with the bytes. A truncated or malformed
+/// question produces a header-only response (`QDCOUNT = 0`) instead of a
+/// partial question or a panic.
+pub fn build_error_response_with_opt(
+    query: &[u8],
+    rcode: u8,
+    opt: Option<&[u8]>,
+) -> Option<Vec<u8>> {
     if query.len() < 12 {
         return None;
     }
@@ -274,32 +323,27 @@ pub fn build_error_response(query: &[u8], rcode: u8) -> Option<Vec<u8>> {
         response_code: rcode,
     };
 
-    let mut response = build_response_header(id, flags, 0, 0, 0, 0);
+    let question = question_section(query);
+    let qdcount = u16::from(question.is_some());
+    let arcount = u16::from(opt.is_some());
 
-    let mut question_section = Vec::new();
-    let mut pos = 12;
-    while pos < query.len() {
-        let len = query[pos] as usize;
-        if len == 0 {
-            pos += 1;
-            break;
-        }
-        if pos + 1 + len > query.len() {
-            break;
-        }
-        question_section.push(query[pos]);
-        question_section.extend_from_slice(&query[pos + 1..pos + 1 + len]);
-        pos += 1 + len;
+    let mut response = build_response_header(id, flags, qdcount, 0, 0, arcount);
+    if let Some(question) = question {
+        response.extend_from_slice(question);
     }
-    question_section.push(0);
-
-    if pos + 4 <= query.len() {
-        question_section.extend_from_slice(&query[pos..pos + 4]);
+    if let Some(opt) = opt {
+        response.extend_from_slice(opt);
     }
-
-    response.extend_from_slice(&question_section);
 
     Some(response)
+}
+
+/// Build an error response that echoes the query's question section.
+///
+/// Thin wrapper over [`build_error_response_with_opt`] for responses that
+/// carry no EDNS OPT record.
+pub fn build_error_response(query: &[u8], rcode: u8) -> Option<Vec<u8>> {
+    build_error_response_with_opt(query, rcode, None)
 }
 
 /// Build a DNS question section
@@ -348,42 +392,225 @@ pub fn build_simple_response(
     response
 }
 
-/// Encode a domain name for DNS wire format
-pub fn encode_name(name: &str) -> Vec<u8> {
-    let mut encoded = Vec::new();
+/// Errors produced while encoding a domain name to wire format.
+///
+/// `encode_owner` is total: instead of silently dropping or shortening a
+/// malformed name (which produced an unparseable or wrong owner on the wire),
+/// it reports the exact RFC 1035 violation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NameError {
+    /// A name contained an empty label (`a..b`, or a leading/trailing dot that
+    /// was not the root designator).
+    EmptyLabel,
+    /// A relative name was handed to a function that requires a fully
+    /// qualified name. A relative name has no canonical form without its
+    /// origin (RFC 4034 §6.2), so it is rejected rather than guessed at.
+    RelativeName { name: String },
+    /// A single label exceeded the 63-octet limit (RFC 1035 §2.3.4).
+    LabelTooLong { len: usize },
+    /// The encoded name exceeded the 255-octet limit (RFC 1035 §2.3.4).
+    NameTooLong { len: usize },
+}
 
-    // Handle empty or root
-    if name.is_empty() || name == "." {
-        encoded.push(0);
-        return encoded;
+impl std::fmt::Display for NameError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EmptyLabel => write!(f, "domain name contains an empty label"),
+            Self::RelativeName { name } => write!(
+                f,
+                "relative domain name '{name}' has no canonical form without its origin"
+            ),
+            Self::LabelTooLong { len } => {
+                write!(f, "domain label of {len} octets exceeds the 63-octet limit")
+            }
+            Self::NameTooLong { len } => write!(
+                f,
+                "encoded domain name of {len} octets exceeds the 255-octet limit"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for NameError {}
+
+/// An owner name expressed the way zones store it: a relative spelling plus
+/// the origin it belongs to.
+///
+/// This is the only place that knows the difference between `www` (relative)
+/// and `www.example.com` (absolute). DNSSEC signs the **fully qualified**
+/// owner (RFC 4034 §3.1.2) and counts its labels (RFC 4034 §3.1.3), so a
+/// signer that takes a bare storage key signs the wrong name. Both the wire
+/// owner and the RRSIG `Labels` field therefore come from this type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OwnerName<'a> {
+    relative: &'a str,
+    origin: &'a str,
+}
+
+impl<'a> OwnerName<'a> {
+    pub const fn new(relative: &'a str, origin: &'a str) -> Self {
+        Self { relative, origin }
     }
 
-    // Handle @ as origin
-    let name = if name == "@" {
-        ""
-    } else {
-        name.trim_end_matches('.')
-    };
+    /// The fully qualified name as presentation text, always absolute:
+    /// `www.example.com.`, or `.` for the root.
+    pub fn fqdn(&self) -> String {
+        let absolute = self.absolute();
+        if absolute.is_empty() {
+            ".".to_string()
+        } else {
+            format!("{absolute}.")
+        }
+    }
 
-    for label in name.split('.') {
-        if label.is_empty() {
-            continue;
+    /// Uncompressed wire form of the fully qualified owner.
+    ///
+    /// Labels are length-checked (1..=63), the total is checked (<= 255
+    /// octets), and empty interior labels are rejected rather than skipped.
+    pub fn wire(&self) -> Result<Vec<u8>, NameError> {
+        encode_absolute(&self.absolute())
+    }
+
+    /// The RRSIG `Labels` field (RFC 4034 §3.1.3).
+    ///
+    /// The root label is not counted, and neither is a leading wildcard label:
+    /// `*.example.com` reports `2`, `www.example.com` reports `3`, and the
+    /// root reports `0`.
+    pub fn labels(&self) -> u8 {
+        let absolute = self.absolute();
+        if absolute.is_empty() {
+            return 0;
         }
-        if label.len() > 63 {
-            continue;
+        let labels: Vec<&str> = absolute
+            .split('.')
+            .filter(|label| !label.is_empty())
+            .collect();
+        let count = labels.len() - usize::from(labels.first() == Some(&"*"));
+        // A valid wire name holds at most 127 labels; saturate rather than
+        // truncate so an over-long name cannot claim a small label count.
+        u8::try_from(count).unwrap_or(u8::MAX)
+    }
+
+    /// The absolute spelling without the trailing root dot (empty for the
+    /// root), applying the zone-file owner rules documented on
+    /// [`encode_owner`].
+    fn absolute(&self) -> String {
+        let relative = self.relative.trim();
+        let origin = normalize_origin(self.origin);
+
+        // 1. An explicit trailing dot marks an absolute name.
+        if relative.len() > 1 && relative.ends_with('.') {
+            return relative.trim_end_matches('.').to_string();
         }
-        encoded.push(label.len() as u8);
-        encoded.extend_from_slice(label.as_bytes());
+
+        // 2. The apex spellings resolve to the origin.
+        if relative.is_empty() || relative == "@" || relative == "." {
+            return origin;
+        }
+
+        // 3. No origin: the name is already absolute (root zone).
+        if origin.is_empty() {
+            return relative.to_string();
+        }
+
+        // 4. Already the origin.
+        if relative.eq_ignore_ascii_case(&origin) {
+            return origin;
+        }
+
+        // 5. Already a fully qualified name inside the origin.
+        if ends_with_origin(relative, &origin) {
+            return relative.to_string();
+        }
+
+        // 6. Relative to the origin.
+        format!("{relative}.{origin}")
+    }
+}
+
+/// Encode an owner name given its zone-relative spelling and the zone origin.
+///
+/// Every owner written to the wire goes through this function, so a stored
+/// record name (`"@"`, `"www"`, `"a.b"`) can never reach the wire as a
+/// partial name. Rules, in order:
+///
+/// 1. a name with its own trailing dot is already absolute and is encoded as
+///    given;
+/// 2. `"@"`, `"."` or the empty string mean the origin;
+/// 3. an empty origin means the relative name is itself absolute (root zone);
+/// 4. a name already equal to the origin is the origin;
+/// 5. a name already inside the origin (`hash.example.com` with origin
+///    `example.com`) is absolute and is encoded as given — DNSSEC NSEC/NSEC3
+///    owners are generated in that form;
+/// 6. anything else is joined as `{relative}.{origin}`.
+///
+/// Labels are length-checked (1..=63), the total is checked (<= 255 octets),
+/// and empty interior labels are rejected rather than skipped.
+pub fn encode_owner(relative: &str, origin: &str) -> Result<Vec<u8>, NameError> {
+    OwnerName::new(relative, origin).wire()
+}
+
+/// Encode an absolute (fully qualified) domain name for DNS wire format.
+///
+/// Thin wrapper around [`encode_owner`] for the question section and RDATA
+/// name targets, which are never zone-relative.
+pub fn encode_name(name: &str) -> Result<Vec<u8>, NameError> {
+    encode_owner(name, "")
+}
+
+/// Strip a trailing root dot and map the root spellings to the empty origin.
+fn normalize_origin(origin: &str) -> String {
+    let origin = origin.trim().trim_end_matches('.');
+    if origin == "@" {
+        String::new()
+    } else {
+        origin.to_string()
+    }
+}
+
+/// True when `name` already ends with `.origin` (ASCII case-insensitive) and
+/// has at least one label of its own.
+fn ends_with_origin(name: &str, origin: &str) -> bool {
+    let name = name.as_bytes();
+    let origin = origin.as_bytes();
+    if name.len() <= origin.len() + 1 {
+        return false;
+    }
+    if name[name.len() - origin.len() - 1] != b'.' {
+        return false;
+    }
+    name[name.len() - origin.len()..].eq_ignore_ascii_case(origin)
+}
+
+/// Encode a name that is already absolute, rejecting every malformed label.
+fn encode_absolute(name: &str) -> Result<Vec<u8>, NameError> {
+    let mut encoded = Vec::with_capacity(name.len() + 2);
+
+    if !name.is_empty() {
+        for label in name.split('.') {
+            if label.is_empty() {
+                return Err(NameError::EmptyLabel);
+            }
+            if label.len() > 63 {
+                return Err(NameError::LabelTooLong { len: label.len() });
+            }
+            encoded.push(label.len() as u8);
+            encoded.extend_from_slice(label.as_bytes());
+        }
     }
     encoded.push(0);
 
-    encoded
+    if encoded.len() > 255 {
+        return Err(NameError::NameTooLong { len: encoded.len() });
+    }
+
+    Ok(encoded)
 }
 #[cfg(test)]
 mod tests {
     use super::{
-        build_question, build_response_header, build_simple_response, encode_name,
-        get_message_flags, get_message_id, parse_query_name, MessageFlags,
+        build_question, build_response_header, build_simple_response, encode_name, encode_owner,
+        get_message_flags, get_message_id, parse_query_name, MessageFlags, NameError, OwnerName,
     };
 
     #[test]
@@ -568,7 +795,7 @@ mod tests {
 
     #[test]
     fn test_encode_name() {
-        let encoded = encode_name("example.com");
+        let encoded = encode_name("example.com").unwrap();
         // Should be: 07 example 03 com 00
         assert_eq!(
             encoded,
@@ -578,20 +805,144 @@ mod tests {
 
     #[test]
     fn test_encode_name_root() {
-        let encoded = encode_name(".");
+        let encoded = encode_name(".").unwrap();
         assert_eq!(encoded, vec![0x00]);
     }
 
     #[test]
     fn test_encode_name_empty() {
-        let encoded = encode_name("");
+        let encoded = encode_name("").unwrap();
         assert_eq!(encoded, vec![0x00]);
     }
 
     #[test]
     fn test_encode_name_at_origin() {
-        let encoded = encode_name("@");
+        let encoded = encode_name("@").unwrap();
         assert_eq!(encoded, vec![0x00]);
+    }
+
+    #[test]
+    fn test_encode_owner_joins_relative_name_and_origin() {
+        let encoded = encode_owner("www", "example.com").unwrap();
+        assert_eq!(
+            encoded,
+            vec![
+                0x03, b'w', b'w', b'w', 0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0x03, b'c',
+                b'o', b'm', 0x00
+            ]
+        );
+    }
+
+    #[test]
+    fn test_encode_owner_apex_spellings_resolve_to_origin() {
+        let origin = encode_owner("example.com", "example.com").unwrap();
+        for apex in ["@", "", ".", "example.com", "EXAMPLE.COM"] {
+            assert_eq!(
+                encode_owner(apex, "example.com").unwrap(),
+                origin,
+                "apex spelling {apex:?} must encode as the origin"
+            );
+        }
+        // An explicitly absolute spelling keeps the caller's case; DNS names
+        // compare case-insensitively, so this is still the origin.
+        let explicit = encode_owner("EXAMPLE.COM.", "example.com").unwrap();
+        assert_eq!(
+            parse_query_name(&explicit, 0).as_deref(),
+            Some("EXAMPLE.COM")
+        );
+    }
+
+    #[test]
+    fn test_encode_owner_absolute_name_inside_origin_is_not_joined_again() {
+        // NSEC3 owners are generated as "<hash>.example.com"; joining them with
+        // the origin again would move the record out of the zone.
+        let encoded = encode_owner("abc.example.com", "example.com").unwrap();
+        assert_eq!(encoded, encode_name("abc.example.com").unwrap());
+    }
+
+    #[test]
+    fn test_encode_owner_empty_origin_is_root_zone() {
+        assert_eq!(
+            encode_owner("example.com", "").unwrap(),
+            encode_name("example.com").unwrap()
+        );
+        assert_eq!(encode_owner("@", "").unwrap(), vec![0u8]);
+    }
+
+    #[test]
+    fn test_encode_owner_rejects_empty_label() {
+        assert_eq!(
+            encode_owner("a..b", "example.com"),
+            Err(NameError::EmptyLabel)
+        );
+    }
+
+    #[test]
+    fn test_encode_owner_rejects_oversized_label() {
+        assert_eq!(
+            encode_owner(&"a".repeat(64), "example.com"),
+            Err(NameError::LabelTooLong { len: 64 })
+        );
+    }
+
+    #[test]
+    fn test_encode_owner_rejects_oversized_name() {
+        // 4 * 63 + 1 + 4 labels = 260 octets encoded, over the 255 limit.
+        let name = (0..4).map(|_| "a".repeat(63)).collect::<Vec<_>>().join(".");
+        assert!(matches!(
+            encode_owner(&name, ""),
+            Err(NameError::NameTooLong { .. })
+        ));
+    }
+
+    #[test]
+    fn test_owner_name_fqdn_joins_the_origin() {
+        assert_eq!(
+            OwnerName::new("www", "example.com").fqdn(),
+            "www.example.com."
+        );
+        assert_eq!(OwnerName::new("@", "example.com").fqdn(), "example.com.");
+        assert_eq!(OwnerName::new("", "example.com.").fqdn(), "example.com.");
+        // An absolute spelling is not joined again.
+        assert_eq!(
+            OwnerName::new("a.b.example.com", "example.com").fqdn(),
+            "a.b.example.com."
+        );
+        // The root zone.
+        assert_eq!(OwnerName::new("@", "").fqdn(), ".");
+    }
+
+    #[test]
+    fn test_owner_name_wire_matches_encode_owner() {
+        for (relative, origin) in [
+            ("www", "example.com"),
+            ("@", "example.com"),
+            ("a.b", "example.com"),
+            ("abc.example.com", "example.com"),
+            ("WWW", "EXAMPLE.COM"),
+            ("@", ""),
+        ] {
+            assert_eq!(
+                OwnerName::new(relative, origin).wire().unwrap(),
+                encode_owner(relative, origin).unwrap(),
+                "OwnerName::wire must be the one owner encoder for ({relative:?}, {origin:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn test_owner_name_labels_follow_rfc4034() {
+        // RFC 4034 §3.1.3: the root label is not counted.
+        assert_eq!(OwnerName::new("@", "example.com").labels(), 2);
+        assert_eq!(OwnerName::new("www", "example.com").labels(), 3);
+        assert_eq!(OwnerName::new("a.b", "example.com").labels(), 4);
+        // A leading wildcard label is not counted either.
+        assert_eq!(OwnerName::new("*", "example.com").labels(), 2);
+        assert_eq!(OwnerName::new("*.sub", "example.com").labels(), 3);
+        // Only the leftmost label can be a wildcard.
+        assert_eq!(OwnerName::new("a.*", "example.com").labels(), 4);
+        // The root has no labels.
+        assert_eq!(OwnerName::new("@", "").labels(), 0);
     }
 
     #[test]
@@ -599,7 +950,7 @@ mod tests {
         let question = build_question("example.com.", 1, 1);
 
         // Build a simple answer (just the name + type + class + ttl + rdlen)
-        let answer = encode_name("example.com.");
+        let answer = encode_name("example.com.").unwrap();
         let mut full_answer = answer.clone();
         full_answer.extend_from_slice(&1u16.to_be_bytes()); // Type A
         full_answer.extend_from_slice(&1u16.to_be_bytes()); // Class IN

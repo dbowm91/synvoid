@@ -33,6 +33,16 @@ pub struct DnsMeshConfig {
 
     #[serde(default)]
     pub require_cert_chain_verification: bool,
+
+    /// Domains a DHT-sourced origin registration may answer for.
+    ///
+    /// Authenticity (a valid signature bound to the claimed publisher) does
+    /// not prove authorization to serve a name. A signed registration for a
+    /// domain that is neither listed here, nor already declared by the origin
+    /// through a live mTLS registration, nor authorized by an org-key claim is
+    /// retained for telemetry but never served. Default deny: empty.
+    #[serde(default)]
+    pub authorized_domains: Vec<String>,
 }
 
 use super::defaults::default_true;
@@ -69,6 +79,7 @@ impl Default for DnsMeshConfig {
             verification_timeout_secs: default_verification_timeout(),
             qname_minimization: true,
             require_cert_chain_verification: false,
+            authorized_domains: Vec::new(),
         }
     }
 }
@@ -85,6 +96,15 @@ impl DnsMeshConfig {
             return Err(DnsConfigError::InvalidMesh(
                 "sync_interval_secs must be greater than zero".to_string(),
             ));
+        }
+
+        for domain in &self.authorized_domains {
+            let normalized = domain.trim().trim_end_matches('.');
+            if normalized.is_empty() {
+                return Err(DnsConfigError::InvalidMesh(
+                    "authorized_domains entries must be non-empty domain names".to_string(),
+                ));
+            }
         }
 
         Ok(())

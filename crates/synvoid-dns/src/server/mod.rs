@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,7 +15,7 @@ use super::dnssec::{compute_dnskey, Algorithm};
 use super::doh::DohServer;
 use super::doq::DoqServer;
 use super::dot::DotServer;
-use super::edns::{parse_edns_options, EdnsOptions};
+use super::edns::EdnsOptions;
 use super::query_validator::DnsQueryValidator;
 use super::store::ZoneStore;
 use super::wire;
@@ -27,7 +27,9 @@ pub use hickory_proto::rr::RecordType;
 
 pub use self::rate_limit::DnsRateLimiter;
 
+mod admission;
 mod dnssec_impl;
+mod lookup;
 mod query;
 mod rate_limit;
 mod response;
@@ -36,7 +38,19 @@ mod sharded_store;
 mod startup;
 mod zone;
 
+pub use admission::{admit, Admission, Admitted, TransportKind};
+pub use lookup::LookupOutcome;
 pub use sharded_store::ShardedZoneStore;
+
+// The one RDATA encoder, shared by the wire path (`encode_rr`) and the DNSSEC
+// signer. Crate-visible so `dnssec_validation::canonical_rdata` cannot grow a
+// second, divergent implementation.
+pub(crate) use self::response_encoder::rdata_wire;
+
+// Key selection for a signed zone: `DNSKEY`/`CDS`/`CDNSKEY` with the KSK,
+// everything else with the ZSK. Re-exported so no query-path module has to
+// grow its own rule.
+pub(crate) use self::dnssec_impl::ZoneSigningKeys;
 
 pub trait RecordTypeExt {
     fn to_u16(&self) -> u16;
@@ -92,15 +106,11 @@ impl DnsServer {
     fn generate_random_salt() -> Result<Vec<u8>, super::crypto_rng::CryptoRngError> {
         super::crypto_rng::random_bytes(16)
     }
+}
 
-    fn parse_soa_serial(soa_value: &str) -> u32 {
-        for token in soa_value.split_whitespace() {
-            if let Ok(serial) = token.parse::<u32>() {
-                return serial;
-            }
-        }
-        1
-    }
+/// The SERIAL field of an SOA RDATA value (`mname rname serial ...`).
+fn soa_serial_of(soa_value: &str) -> Option<u32> {
+    soa_value.split_whitespace().nth(2)?.parse::<u32>().ok()
 }
 
 #[derive(Clone, Debug)]
@@ -111,6 +121,13 @@ pub struct DnsZoneRecord {
     pub ttl: u32,
     pub priority: Option<u32>,
 }
+
+/// The zone record map: `(origin-relative owner, type) -> RRset`.
+///
+/// Owners are always stored in the origin-relative spelling the query path
+/// looks up (`"@"`, `"www"`, `"a.b"`); [`Zone::commit_records`] is the only
+/// function that installs one, and it normalizes every key first.
+pub type RecordMap = HashMap<(String, RecordType), Vec<DnsZoneRecord>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ZoneValidationError {
@@ -302,6 +319,20 @@ pub enum AuthoritativeLookupOutcome {
         qtype: u16,
         soa: Option<DnsZoneRecord>,
     },
+    /// A name below a zone cut: NS in authority, glue in additional.
+    Referral {
+        origin: String,
+        delegation: String,
+        ns: Vec<DnsZoneRecord>,
+        glue: Vec<DnsZoneRecord>,
+    },
+    /// A DNAME at an ancestor of the qname synthesized a CNAME.
+    Dname {
+        origin: String,
+        qname: String,
+        dname: Vec<DnsZoneRecord>,
+        cname: DnsZoneRecord,
+    },
     NoAuthoritativeZone {
         qname: String,
         qtype: u16,
@@ -309,33 +340,30 @@ pub enum AuthoritativeLookupOutcome {
 }
 
 impl Zone {
+    /// True when an RRset owner exists at `lookup_name` (relative or in-zone
+    /// absolute). Empty non-terminals are *not* owners; they exist for
+    /// closest-encloser purposes only.
     pub fn owner_exists(&self, lookup_name: &str) -> bool {
-        let origin = self.origin.trim_end_matches('.').to_lowercase();
-        self.records.keys().any(|(name, _)| {
-            name == lookup_name
-                || (lookup_name == "@" && name.to_lowercase() == origin)
-                || (name == "@" && lookup_name.to_lowercase() == origin)
-        })
+        self.denial.is_owner(lookup_name)
     }
 
     pub fn type_exists_at_owner(&self, lookup_name: &str, qtype: RecordType) -> bool {
-        let origin = self.origin.trim_end_matches('.').to_lowercase();
-        self.records.keys().any(|(name, rt)| {
-            (name == lookup_name
-                || (lookup_name == "@" && name.to_lowercase() == origin)
-                || (name == "@" && lookup_name.to_lowercase() == origin))
-                && *rt == qtype
-        })
+        self.rrset(lookup_name, qtype).is_some()
     }
 
     pub fn get_soa(&self) -> Option<DnsZoneRecord> {
-        let origin = self.origin.trim_end_matches('.').to_lowercase();
         self.records
             .get(&("@".to_string(), RecordType::SOA))
-            .or_else(|| self.records.get(&(origin, RecordType::SOA)))
             .and_then(|records| records.first().cloned())
     }
 
+    /// Compatibility projection of [`Zone::lookup`] onto the original
+    /// four-outcome API.
+    ///
+    /// The query path uses [`Zone::lookup`] directly; this wrapper exists so
+    /// callers that only need "answer / CNAME / NODATA / NXDOMAIN" do not have
+    /// to match the full state machine. It must never grow a second lookup:
+    /// every outcome is derived from [`Zone::lookup`].
     pub fn lookup_authoritative(
         &self,
         lookup_name: &str,
@@ -343,43 +371,78 @@ impl Zone {
     ) -> AuthoritativeLookupOutcome {
         let origin = self.origin.clone();
         let record_type = RecordType::from(qtype);
-        let key = (lookup_name.to_string(), record_type);
 
-        if let Some(records) = self.records.get(&key) {
-            return AuthoritativeLookupOutcome::Positive {
-                origin,
-                qname: lookup_name.to_string(),
-                qtype,
-                records: records.clone(),
-            };
-        }
-
-        let cname_key = (lookup_name.to_string(), RecordType::CNAME);
-        if let Some(cname_records) = self.records.get(&cname_key) {
-            return AuthoritativeLookupOutcome::Cname {
-                origin,
-                qname: lookup_name.to_string(),
-                cname_records: cname_records.clone(),
-            };
-        }
-
-        let name_exists = self.owner_exists(lookup_name);
-        let soa = self.get_soa();
-
-        if name_exists {
-            AuthoritativeLookupOutcome::NoData {
-                origin,
-                qname: lookup_name.to_string(),
-                qtype,
-                soa,
+        match self.lookup(lookup_name, record_type) {
+            LookupOutcome::Answer { records, .. }
+            | LookupOutcome::WildcardAnswer { records, .. } => {
+                AuthoritativeLookupOutcome::Positive {
+                    origin,
+                    qname: lookup_name.to_string(),
+                    qtype,
+                    records,
+                }
             }
-        } else {
-            AuthoritativeLookupOutcome::NxDomain {
+            LookupOutcome::Cname { records } => AuthoritativeLookupOutcome::Cname {
+                origin,
+                qname: lookup_name.to_string(),
+                // The compatibility shape is "the CNAME RRset"; the chain's
+                // in-zone target records are a query-path detail.
+                cname_records: records
+                    .into_iter()
+                    .filter(|record| record.record_type == RecordType::CNAME)
+                    .collect(),
+            },
+            LookupOutcome::Dname { answer } => {
+                let mut dname = Vec::new();
+                let mut cname = None;
+                for record in answer {
+                    if record.record_type == RecordType::DNAME {
+                        dname.push(record);
+                    } else if record.record_type == RecordType::CNAME {
+                        cname = Some(record);
+                    }
+                }
+                match cname {
+                    Some(cname) => AuthoritativeLookupOutcome::Dname {
+                        origin,
+                        qname: lookup_name.to_string(),
+                        dname,
+                        cname,
+                    },
+                    None => AuthoritativeLookupOutcome::NoData {
+                        origin,
+                        qname: lookup_name.to_string(),
+                        qtype,
+                        soa: self.get_soa(),
+                    },
+                }
+            }
+            LookupOutcome::Referral {
+                delegation,
+                authority,
+                additional,
+            } => AuthoritativeLookupOutcome::Referral {
+                origin,
+                delegation,
+                ns: authority,
+                glue: additional,
+            },
+            LookupOutcome::NoData
+            | LookupOutcome::EmptyNonTerminal
+            | LookupOutcome::WildcardNoData { .. }
+            | LookupOutcome::Loop
+            | LookupOutcome::DnameOverflow => AuthoritativeLookupOutcome::NoData {
                 origin,
                 qname: lookup_name.to_string(),
                 qtype,
-                soa,
-            }
+                soa: self.get_soa(),
+            },
+            LookupOutcome::NxDomain => AuthoritativeLookupOutcome::NxDomain {
+                origin,
+                qname: lookup_name.to_string(),
+                qtype,
+                soa: self.get_soa(),
+            },
         }
     }
 
@@ -496,23 +559,54 @@ impl fmt::Display for DnssecState {
 #[derive(Debug, Clone)]
 pub struct Zone {
     pub origin: String,
-    pub records: HashMap<(String, RecordType), Vec<DnsZoneRecord>>,
+    pub records: RecordMap,
     pub serial: u32,
+    /// Key handles are **reload-only** (phase 05 R4): they are assigned by
+    /// `initialize_dnssec` from the keystore's active keys and never mutated
+    /// by a runtime rotation task. Rotating keys is a manual runbook
+    /// operation followed by a restart, so the served DNSKEY and the
+    /// validating key cannot drift apart.
     pub ksk_key: Option<Arc<super::dnssec::ZoneSigningKey>>,
     pub zsk_key: Option<Arc<super::dnssec::ZoneSigningKey>>,
     pub dnskey_ttl: Option<u32>,
     pub nsec3_enabled: bool,
     pub nsec_enabled: bool,
     pub nsec3param: Option<super::dnssec::Nsec3Config>,
+    /// Canonical owner index plus NSEC/NSEC3 chains (phase 05).
+    ///
+    /// An `Arc` so a `Zone` clone — and therefore a served-zone snapshot —
+    /// clones one pointer, not the chains. Rebuilt only by
+    /// [`Zone::rebuild_denial`], which [`Zone::commit_records`] calls.
+    pub(crate) denial: Arc<super::denial::ZoneDenial>,
     pub history: Vec<ZoneHistory>,
     pub health: ZoneHealth,
 }
 
+/// A previous zone version, kept for IXFR.
+///
+/// `records` is an `Arc` so cloning a `Zone` (the query path used to clone the
+/// whole zone) clones one pointer per history entry instead of a full record
+/// map — up to 200 of them (D18, phase 09 R3).
 #[derive(Clone, Debug)]
 pub struct ZoneHistory {
     pub serial: u32,
-    pub records: HashMap<(String, RecordType), Vec<DnsZoneRecord>>,
+    pub records: Arc<RecordMap>,
     pub timestamp: u64,
+}
+
+/// What [`Zone::commit_records`] does to the zone serial.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SerialPolicy {
+    /// Leave the serial alone. Used for a post-mutation commit and for
+    /// installer paths that already carry the authoritative serial.
+    Keep,
+    /// Adopt the serial from the installed SOA record. Used by zone load,
+    /// store reload, mesh apply and the zone-file parser: the record set is
+    /// the authoritative version and its SOA is the serial of record.
+    AdoptSoa,
+    /// A local change: bump the serial (RFC 1982), journal the pre-change
+    /// record map for IXFR, and write the new serial into the SOA.
+    Bump,
 }
 
 impl Zone {
@@ -527,9 +621,262 @@ impl Zone {
             nsec3_enabled: false,
             nsec_enabled: false,
             nsec3param: None,
+            denial: Arc::new(super::denial::ZoneDenial::default()),
             history: Vec::new(),
             health: ZoneHealth::default(),
         }
+    }
+
+    /// The zone's canonical owner index and denial chains.
+    pub fn denial(&self) -> &Arc<super::denial::ZoneDenial> {
+        &self.denial
+    }
+
+    /// Rebuild the canonical owner index and the NSEC/NSEC3 chains.
+    ///
+    /// This is the **only** function that constructs a [`ZoneDenial`]; it is
+    /// called by [`Zone::commit_records`], the single writer for zone state
+    /// (phase 09 R2), so no mutation path can publish a stale chain.
+    pub fn rebuild_denial(&mut self) {
+        self.denial = Arc::new(super::denial::ZoneDenial::build(
+            &self.origin,
+            &self.records,
+            self.nsec3param.as_ref(),
+            self.dnskey_ttl.unwrap_or(3600),
+        ));
+    }
+
+    /// The single writer for zone state (phase 09 R2).
+    ///
+    /// Installs `records` as the zone's data after:
+    ///
+    /// 1. normalizing every owner to the origin-relative spelling the query
+    ///    path looks up (`"@"`, `"www"`, `"a.b"`): an in-zone FQDN is reduced
+    ///    to its relative form, a relative key (which may contain dots) is
+    ///    kept, and an absolute name outside the zone is rejected;
+    /// 2. deduplicating `(owner, type, rdata)` and giving every RRset one TTL
+    ///    (the smallest configured, RFC 2181 §5.2);
+    /// 3. rebuilding the canonical owner index and denial chains
+    ///    ([`Zone::rebuild_denial`]);
+    /// 4. applying `policy`: keep the serial, adopt the SOA serial, or bump
+    ///    it and journal the previous record map for IXFR.
+    ///
+    /// On a normalization error the zone is left **unchanged**: the new map is
+    /// built completely before it is installed. Every production mutation path
+    /// goes through here — config load (`load_zones_inner`), store reload
+    /// (`load_zones_from_store`), atomic reload
+    /// (`replace_zone_with_validation`), `add_record`, the dynamic-update
+    /// commit, mesh apply and `ShardedZoneStore::insert`.
+    ///
+    /// The response cache is not reachable from a `Zone` (a zone is also used
+    /// by cache-less callers such as the IXFR handler and tests), so every
+    /// server-side writer pairs this call with
+    /// [`DnsServer::invalidate_zone_cache`] immediately afterwards.
+    pub fn commit_records(
+        &mut self,
+        records: RecordMap,
+        policy: SerialPolicy,
+    ) -> Result<u32, String> {
+        let origin = self.origin.clone();
+        let mut normalized: RecordMap = HashMap::with_capacity(records.len());
+
+        for ((name, record_type), rrset) in records {
+            let relative = Self::normalize_key(&origin, &name)
+                .map_err(|reason| format!("zone {origin}: record name '{name}' {reason}"))?;
+            let entry = normalized
+                .entry((relative.clone(), record_type))
+                .or_default();
+            for mut record in rrset {
+                record.name = relative.clone();
+                record.record_type = record_type;
+                entry.push(record);
+            }
+        }
+        for rrset in normalized.values_mut() {
+            Self::normalize_rrset(rrset);
+        }
+
+        let previous = std::mem::replace(&mut self.records, normalized);
+        self.rebuild_denial();
+        self.health.record_count = self.records.len();
+
+        match policy {
+            SerialPolicy::Keep => {}
+            SerialPolicy::AdoptSoa => {
+                let serial = self
+                    .records
+                    .get(&("@".to_string(), RecordType::SOA))
+                    .and_then(|records| records.first())
+                    .and_then(|record| soa_serial_of(&record.value));
+                // Preserve the historical load rule: a zone never serves
+                // serial 0 (it is indistinguishable from "never loaded").
+                self.serial = match serial {
+                    None | Some(0) => 1,
+                    Some(serial) => serial,
+                };
+            }
+            SerialPolicy::Bump => {
+                let old_serial = self.serial;
+                self.journal(previous, old_serial);
+                self.serial = Self::increment_serial_rfc1982(old_serial);
+                self.sync_soa_serial(self.serial);
+            }
+        }
+
+        Ok(self.serial)
+    }
+
+    /// Deduplicate an RRset and give it one TTL.
+    ///
+    /// Duplicate `(value, priority)` pairs are the same RDATA (the plan's
+    /// `(owner, type, rdata)` key); the first occurrence wins and every member
+    /// is served with the RRset's smallest TTL so no answer outlives its
+    /// shortest-configured member.
+    fn normalize_rrset(rrset: &mut Vec<DnsZoneRecord>) {
+        if rrset.is_empty() {
+            return;
+        }
+        let ttl = rrset.iter().map(|record| record.ttl).min().unwrap_or(0);
+        let mut seen: HashSet<(String, Option<u32>)> = HashSet::with_capacity(rrset.len());
+        rrset.retain(|record| seen.insert((record.value.clone(), record.priority)));
+        for record in rrset.iter_mut() {
+            record.ttl = ttl;
+        }
+    }
+
+    /// Journal a previous record map at `serial`, capped like
+    /// [`Zone::increment_serial`].
+    fn journal(&mut self, records: RecordMap, serial: u32) {
+        if self.history.len() >= 200 {
+            self.history.remove(0);
+        }
+        self.history.push(ZoneHistory {
+            serial,
+            records: Arc::new(records),
+            timestamp: unix_timestamp_secs(),
+        });
+    }
+
+    /// Write `serial` into the apex SOA RDATA, keeping the served SOA and
+    /// `Zone::serial` in step.
+    pub fn sync_soa_serial(&mut self, serial: u32) {
+        if let Some(records) = self.records.get_mut(&("@".to_string(), RecordType::SOA)) {
+            for record in records.iter_mut() {
+                let mut parts: Vec<String> = record
+                    .value
+                    .split_whitespace()
+                    .map(str::to_string)
+                    .collect();
+                if parts.len() >= 7 {
+                    parts[2] = serial.to_string();
+                    record.value = parts.join(" ");
+                }
+            }
+        }
+    }
+
+    /// Set the zone serial and its SOA SERIAL field together.
+    pub fn set_serial_and_sync_soa(&mut self, serial: u32) {
+        self.serial = serial;
+        self.sync_soa_serial(serial);
+    }
+
+    /// Normalize a zone-record name to the **origin-relative** form the
+    /// authoritative query path looks records up by.
+    ///
+    /// The query path strips the zone origin off the qname and looks the
+    /// remainder up, mapping the apex to `"@"`. A record must be stored the
+    /// same way or it is unreachable — the zone would answer an authoritative
+    /// NXDOMAIN for a name it contains.
+    ///
+    /// The operator-facing spelling is the natural FQDN, so it is accepted and
+    /// normalized here. The rule follows the zone-file convention:
+    ///
+    /// - `"@"` is the apex;
+    /// - a name containing a `.` is an FQDN: it must be inside the zone, and is
+    ///   reduced to its relative form;
+    /// - a name without a `.` is already origin-relative and is kept as-is.
+    ///
+    /// A name that is an FQDN outside the zone is rejected rather than stored
+    /// under a key nothing will ever query.
+    pub fn normalize_record_name(origin: &str, name: &str) -> Result<String, String> {
+        let origin = origin.trim().trim_end_matches('.').to_lowercase();
+        let name = name.trim().trim_end_matches('.').to_lowercase();
+
+        if name.is_empty() {
+            return Err("has an empty name".to_string());
+        }
+
+        if name == "@" {
+            return Ok("@".to_string());
+        }
+
+        // No dot: already relative to the origin.
+        if !name.contains('.') {
+            return Ok(name);
+        }
+
+        if name == origin {
+            return Ok("@".to_string());
+        }
+
+        match name.strip_suffix(&format!(".{origin}")) {
+            Some(relative) if !relative.is_empty() => Ok(relative.to_string()),
+            _ => Err(format!(
+                "is outside zone '{origin}'; a record name must be '@', a label, \
+                 or an FQDN inside the zone"
+            )),
+        }
+    }
+
+    /// Normalize a stored record-map key.
+    ///
+    /// This is the writer's key rule and differs from
+    /// [`Zone::normalize_record_name`] in exactly one way: a dotted name
+    /// **without** a trailing dot is a legitimate relative key (`_sip._tcp`,
+    /// `a.b`), not an out-of-zone FQDN. An absolute spelling (trailing dot)
+    /// outside the zone is still rejected, and an absolute in-zone spelling is
+    /// reduced to its relative form. Operator input goes through the strict
+    /// normalizer at the load and `add_record` boundaries.
+    pub(crate) fn normalize_key(origin: &str, name: &str) -> Result<String, String> {
+        let raw = name.trim();
+        let absolute = raw.ends_with('.');
+        let origin = origin.trim().trim_end_matches('.').to_lowercase();
+        let name = raw.trim_end_matches('.').to_lowercase();
+
+        if name.is_empty() {
+            return Err("has an empty name".to_string());
+        }
+        if name == "@" || name == origin {
+            return Ok("@".to_string());
+        }
+
+        if !origin.is_empty() {
+            let suffix = format!(".{origin}");
+            if let Some(relative) = name.strip_suffix(&suffix) {
+                if !relative.is_empty() {
+                    return Ok(relative.to_string());
+                }
+            }
+        }
+
+        if absolute {
+            return Err(format!(
+                "is outside zone '{origin}'; a record name must be '@', a label, \
+                 or an FQDN inside the zone"
+            ));
+        }
+
+        // Already origin-relative — dotted relative keys are legitimate.
+        Ok(name)
+    }
+
+    /// The origin-relative key for an in-zone name (relative or absolute).
+    ///
+    /// Returns `None` when the name is outside the zone, so a lookup can never
+    /// read a parent zone's data for a child name by accident.
+    pub(crate) fn relative_name(&self, name: &str) -> Option<String> {
+        Self::normalize_key(&self.origin, name).ok()
     }
 
     pub fn increment_serial(&mut self) {
@@ -542,7 +889,9 @@ impl Zone {
 
         let history_entry = ZoneHistory {
             serial: old_serial,
-            records: self.records.clone(),
+            // One pointer per history entry: a `Zone` clone (the old per-query
+            // clone path, D18) must not copy the record map per version.
+            records: Arc::new(self.records.clone()),
             timestamp: unix_timestamp_secs(),
         };
 
@@ -848,6 +1197,7 @@ impl Zone {
                 if *rtype == RecordType::NS
                     || *rtype == RecordType::MX
                     || *rtype == RecordType::CNAME
+                    || *rtype == RecordType::DNAME
                 {
                     let target = if *rtype == RecordType::MX {
                         record.value.split_whitespace().last().unwrap_or("")
@@ -898,6 +1248,8 @@ impl Zone {
             RecordType::SRV,
             RecordType::PTR,
             RecordType::NS,
+            // RFC 6672 §2.4: a CNAME and a DNAME cannot share an owner.
+            RecordType::DNAME,
             RecordType::SOA,
             RecordType::CAA,
             RecordType::TLSA,
@@ -1950,131 +2302,27 @@ impl DnsServer {
             authoritative.cache.max_ttl_secs_u32(),
         );
 
+        // The built-in rule set has one definition (`DnsFirewall::from_runtime`)
+        // so the authoritative and recursive listeners enforce the same policy.
         let firewall = if authoritative.firewall.enabled {
-            let mut fw = super::firewall::DnsFirewall::new();
-
-            if let Some(ref lookup) = geoip_lookup {
-                fw = fw.with_country_lookup(Arc::clone(lookup));
-            }
-
-            if authoritative.firewall.block_internal_ips {
-                let rule = super::firewall::DnsFirewallRule {
-                    id: "block_internal_ips".to_string(),
-                    rule_type: super::firewall::DnsFirewallRuleType::Subnet,
-                    action: super::firewall::DnsFirewallAction::Block,
-                    target: "10.0.0.0/8".to_string(),
-                    ttl: 300,
-                    created_at: unix_timestamp_secs(),
-                    expires_at: None,
-                    enabled: true,
-                };
-                let _ = fw.add_rule(rule);
-
-                let rule2 = super::firewall::DnsFirewallRule {
-                    id: "block_private_172".to_string(),
-                    rule_type: super::firewall::DnsFirewallRuleType::Subnet,
-                    action: super::firewall::DnsFirewallAction::Block,
-                    target: "172.16.0.0/12".to_string(),
-                    ttl: 300,
-                    created_at: unix_timestamp_secs(),
-                    expires_at: None,
-                    enabled: true,
-                };
-                let _ = fw.add_rule(rule2);
-
-                let rule3 = super::firewall::DnsFirewallRule {
-                    id: "block_private_192".to_string(),
-                    rule_type: super::firewall::DnsFirewallRuleType::Subnet,
-                    action: super::firewall::DnsFirewallAction::Block,
-                    target: "192.168.0.0/16".to_string(),
-                    ttl: 300,
-                    created_at: unix_timestamp_secs(),
-                    expires_at: None,
-                    enabled: true,
-                };
-                let _ = fw.add_rule(rule3);
-
-                let rule4 = super::firewall::DnsFirewallRule {
-                    id: "block_loopback".to_string(),
-                    rule_type: super::firewall::DnsFirewallRuleType::Subnet,
-                    action: super::firewall::DnsFirewallAction::Block,
-                    target: "127.0.0.0/8".to_string(),
-                    ttl: 300,
-                    created_at: unix_timestamp_secs(),
-                    expires_at: None,
-                    enabled: true,
-                };
-                let _ = fw.add_rule(rule4);
-
-                let rule5 = super::firewall::DnsFirewallRule {
-                    id: "block_linklocal".to_string(),
-                    rule_type: super::firewall::DnsFirewallRuleType::Subnet,
-                    action: super::firewall::DnsFirewallAction::Block,
-                    target: "169.254.0.0/16".to_string(),
-                    ttl: 300,
-                    created_at: unix_timestamp_secs(),
-                    expires_at: None,
-                    enabled: true,
-                };
-                let _ = fw.add_rule(rule5);
-
-                let rule6 = super::firewall::DnsFirewallRule {
-                    id: "block_ipv6_loopback".to_string(),
-                    rule_type: super::firewall::DnsFirewallRuleType::Subnet,
-                    action: super::firewall::DnsFirewallAction::Block,
-                    target: "::1/128".to_string(),
-                    ttl: 300,
-                    created_at: unix_timestamp_secs(),
-                    expires_at: None,
-                    enabled: true,
-                };
-                let _ = fw.add_rule(rule6);
-
-                let rule7 = super::firewall::DnsFirewallRule {
-                    id: "block_ipv6_ula".to_string(),
-                    rule_type: super::firewall::DnsFirewallRuleType::Subnet,
-                    action: super::firewall::DnsFirewallAction::Block,
-                    target: "fc00::/7".to_string(),
-                    ttl: 300,
-                    created_at: unix_timestamp_secs(),
-                    expires_at: None,
-                    enabled: true,
-                };
-                let _ = fw.add_rule(rule7);
-
-                let rule8 = super::firewall::DnsFirewallRule {
-                    id: "block_ipv6_linklocal".to_string(),
-                    rule_type: super::firewall::DnsFirewallRuleType::Subnet,
-                    action: super::firewall::DnsFirewallAction::Block,
-                    target: "fe80::/10".to_string(),
-                    ttl: 300,
-                    created_at: unix_timestamp_secs(),
-                    expires_at: None,
-                    enabled: true,
-                };
-                let _ = fw.add_rule(rule8);
-            }
-
-            if authoritative.firewall.block_zone_transfers {
-                let rule = super::firewall::DnsFirewallRule {
-                    id: "block_axfr".to_string(),
-                    rule_type: super::firewall::DnsFirewallRuleType::Opcode,
-                    action: super::firewall::DnsFirewallAction::Block,
-                    target: "0x2".to_string(),
-                    ttl: 300,
-                    created_at: unix_timestamp_secs(),
-                    expires_at: None,
-                    enabled: true,
-                };
-                let _ = fw.add_rule(rule);
-            }
-
-            Some(Arc::new(RwLock::new(fw)))
+            let built = super::firewall::DnsFirewall::from_runtime(&authoritative.firewall)
+                .unwrap_or_else(|error| {
+                    // Unreachable for the built-in set (no rule carries an
+                    // expiry). If it ever happens, keep the listener running but
+                    // make the missing policy an error an operator sees.
+                    tracing::error!("DNS firewall could not be built: {error}");
+                    super::firewall::DnsFirewall::new()
+                });
+            let built = match geoip_lookup.as_ref() {
+                Some(lookup) => built.with_country_lookup(Arc::clone(lookup)),
+                None => built,
+            };
+            Some(Arc::new(RwLock::new(built)))
         } else {
             None
         };
 
-        let connection_limits = Arc::new(super::limits::ConnectionLimits::new(
+        let mut connection_limits = super::limits::ConnectionLimits::new(
             authoritative.limits.max_tcp_connections,
             authoritative.limits.max_concurrent_queries,
             authoritative.limits.max_query_size,
@@ -2083,7 +2331,10 @@ impl DnsServer {
             authoritative.limits.max_tcp_idle_time.as_secs(),
             authoritative.limits.max_tcp_query_time.as_secs(),
             authoritative.limits.enable_graceful_degradation,
-        ));
+        );
+        connection_limits
+            .set_max_encrypted_connections(authoritative.limits.max_encrypted_connections);
+        let connection_limits = Arc::new(connection_limits);
 
         let ecs_filter_config = super::edns::EcsFilterConfig::from_runtime(&authoritative.ecs);
 
@@ -2098,6 +2349,8 @@ impl DnsServer {
             };
             super::dns64::Dns64Translator::new(core_config)
         });
+
+        let require_cookie = authoritative.require_cookie;
 
         let server = Self {
             authoritative: Arc::new(authoritative),
@@ -2133,7 +2386,9 @@ impl DnsServer {
             recursive_server: None,
             dns64_translator,
             acme_dns_challenges: LateBinding::empty(),
-            cookie_server: Some(Arc::new(crate::cookie::DnsCookieServer::new())),
+            cookie_server: Some(Arc::new(
+                crate::cookie::DnsCookieServer::new().with_required(require_cookie),
+            )),
             health: Arc::new(crate::health::DnsHealthChecker::new()),
             #[cfg(feature = "mesh")]
             mesh_registry: LateBinding::empty(),
@@ -2181,44 +2436,89 @@ impl DnsServer {
         self.health.clone()
     }
 
-    /// Initialize config-derived health state. Called once at the end of
-    /// `DnsServer::new()` so the first snapshot reflects intended operational
-    /// state, even before `start()` binds listeners.
+    /// Initialize health state. Called once at the end of `DnsServer::new()`.
+    ///
+    /// This function records **configuration intent** only. Realized
+    /// capability flags are set by the code that actually builds the handler,
+    /// binds the listener, or loads the key: setting them here from config is
+    /// exactly the D34 failure this contract exists to prevent.
     fn init_health_state(&self) {
         // Cache state: if cache_enabled is false, the cache is not created
         // and the server cannot serve cached responses.
         self.health
             .set_cache_operational(self.authoritative.cache.enabled);
 
-        // DNSSEC signing state.
+        use crate::health::DnsCapability;
+        let zone_transfer = &self.authoritative.zone_transfer;
+        self.health.set_capability_config_requested(
+            DnsCapability::Axfr,
+            !zone_transfer.allow_transfer.is_empty() || zone_transfer.allow_wildcard_transfer,
+        );
         self.health
-            .set_dnssec_signing_enabled(self.dnssec_runtime.enabled);
+            .set_capability_config_requested(DnsCapability::Ixfr, zone_transfer.ixfr_enabled);
+        self.health.set_capability_config_requested(
+            DnsCapability::Update,
+            self.authoritative.dynamic_update.enabled,
+        );
+        // NOTIFY activation is rejected by the persisted config gate and has
+        // no runtime projection, so `DnsServer` never receives a request for
+        // it. Reporting `false` states that, rather than inventing intent.
+        self.health
+            .set_capability_config_requested(DnsCapability::Notify, false);
+        self.health.set_capability_config_requested(
+            DnsCapability::DnssecSigning,
+            self.dnssec_runtime.enabled,
+        );
+        self.health
+            .set_capability_config_requested(DnsCapability::Recursive, self.recursive.enabled);
+        self.health
+            .set_capability_config_requested(DnsCapability::Dot, self.authoritative.dot.enabled);
+        self.health
+            .set_capability_config_requested(DnsCapability::Doh, self.authoritative.doh.enabled);
+        self.health
+            .set_capability_config_requested(DnsCapability::Doq, self.authoritative.doq.enabled);
 
-        // Encrypted transport state.
-        self.health.set_dot_enabled(self.authoritative.dot.enabled);
-        self.health.set_doh_enabled(self.authoritative.doh.enabled);
-        self.health.set_doq_enabled(self.authoritative.doq.enabled);
+        // DNSSEC signing is realized only by a loaded zone that holds a ZSK.
+        // A configured-but-unloaded deployment reports `false`, and
+        // `start()` re-evaluates after key initialization.
+        self.health
+            .set_dnssec_signing_enabled(self.has_signing_zone());
 
-        // Transfer / update state. AXFR/IXFR handlers are wired in transport;
-        // the control-plane guards (TSIG require, allowlist) live in the
-        // handler. The health flag reflects config intent, not request-time
-        // decisions.
-        self.health.set_axfr_enabled(true);
-        self.health
-            .set_ixfr_enabled(self.authoritative.zone_transfer.ixfr_enabled);
-        self.health
-            .set_update_enabled(self.authoritative.dynamic_update.enabled);
+        // Recursive validation state. A forwarder that is trusted to validate
+        // is `delegated`; only a locally validating recursor is `enabled`.
+        let validation = if !self.recursive.enabled || !self.recursive.dnssec_validation {
+            crate::health::DnssecValidationHealth::Disabled
+        } else if self.recursive.performs_local_dnssec_validation {
+            crate::health::DnssecValidationHealth::Enabled
+        } else {
+            crate::health::DnssecValidationHealth::Delegated
+        };
+        self.health.set_dnssec_validation(validation);
+
+        // Transfer / update policy state. AXFR/IXFR/UPDATE handlers are
+        // attached by composition, not by `new`, so their realized flags stay
+        // false until `start()` observes the attached handlers.
         self.health
             .set_tsig_required(self.authoritative.zone_transfer.require_tsig);
 
-        // Recursive state.
+        // Recursive: configured is not started. `Degraded` is the honest
+        // pre-start state; only `start_recursive_server()` may report healthy.
         if self.recursive.enabled {
-            // Optimistic — `start_recursive_server()` will downgrade to
-            // Degraded if initialization fails or the circuit breaker opens.
-            self.health.set_recursive_healthy();
+            self.health.set_recursive_degraded();
             self.health.set_circuit_breaker_open(false);
         } else {
             self.health.set_recursive_disabled();
         }
+    }
+
+    /// Whether at least one loaded zone holds a ZSK signing handle.
+    fn has_signing_zone(&self) -> bool {
+        let mut signing = false;
+        self.zones.for_each(|_, zone| {
+            if zone.zsk_key.is_some() {
+                signing = true;
+            }
+        });
+        signing
     }
 }

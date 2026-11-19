@@ -93,6 +93,14 @@ name = "parsed_query_parse"
 path = "parsed_query_parse.rs"
 
 [[bin]]
+name = "dns_edns_options"
+path = "dns_edns_options.rs"
+
+[[bin]]
+name = "dns_tsig_parse"
+path = "dns_tsig_parse.rs"
+
+[[bin]]
 name = "http_chunked_framing"
 path = "http_chunked_framing.rs"
 

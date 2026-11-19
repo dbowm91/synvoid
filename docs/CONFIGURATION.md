@@ -951,15 +951,37 @@ Inside the `dns` section, deferred features reject *activation* with a typed
 disabled values stay parseable; the admin `PUT /config/dns` endpoint enforces
 the same validation (400):
 
-- `dns.rpz.enabled`, `dns.prefetch.enabled`, `dns.trust_anchors.enabled`,
-  `dns.anycast.enabled` must stay `false` (no runtime consumer / mesh wiring).
+- `dns.rpz.enabled`, `dns.prefetch.enabled`, `dns.anycast.enabled` must stay
+  `false` (no runtime consumer / mesh wiring). `dns.trust_anchors.enabled`
+  must stay `false`: RFC 5011 is not implemented, and static anchors are read
+  only from `dns.recursive.trust_anchor_path`.
 - `dns.settings.allow_transfer` must stay empty; `dynamic_update.enabled`,
   `notify.enabled`, `padding.enabled`, `qname_privacy.enabled` must stay
   `false`; transfer-knob deviations (`allow_wildcard_transfer = true`,
   `require_tsig = false`, `ixfr_enabled = false`, non-default
-  `ixfr_history_size` / `ixfr_fallback_to_axfr`) are rejected. Until the
-  zone-lifecycle design gate is satisfied, AXFR/IXFR/UPDATE/NOTIFY answer
-  NOTIMP unconditionally.
+  `ixfr_history_size` / `ixfr_fallback_to_axfr`) are rejected. The transfer,
+  update, and NOTIFY handlers are implemented and tested, but the config
+  surface does not construct them: while these gates are closed the server
+  answers NOTIMP. Lifting the gates is a separate product decision.
+- `dns.settings.require_cookie` (default `false`) enables RFC 7873 server
+  cookies on UDP. When enabled, a query without a valid server cookie receives
+  `BADCOOKIE` with a fresh cookie; a query with no EDNS (which cannot carry
+  the cookie) is refused. DoH/DoT/DoQ are exempt because a spoofed source
+  cannot complete the handshake.
+- `dns.recursive.allow_unvalidated_forwarding` (default `false`) is required
+  when `dnssec_validation = true` is combined with a forwarder
+  (`upstream_provider` other than `recursive`). Without it, startup fails;
+  with it, `/health` reports validation as `delegated`, never `enabled`.
+- `dns.mesh.authorized_domains` (default empty) is the DNS-side allowlist for
+  mesh domain registrations. A registration is served only when it is
+  authentic, its publisher is the claimed origin node, and the domain is in
+  this list, one of the node's own declared zones, or covered by an org-key
+  claim. The default is deny; production registrations stay unserved until the
+  mesh record-author binding (mesh campaign phase 04b) lands.
+- `dns.dnssec.tsig_keys[].secret_base64` and `dns.dnssec.hsm.pin` are
+  write-only credentials: `GET /config/dns` and `GET /config/main` return only
+  `secret_set` / `pin_set`, and `PUT` treats an omitted value as "keep" and an
+  empty string as "clear".
 - While `dns.firewall` (or `dns.recursive.firewall`) is enabled,
   `default_action` must stay `allow`, `max_rules` at default, and
   `rebinding_protection.enabled` must be explicitly `false` (unenforced).

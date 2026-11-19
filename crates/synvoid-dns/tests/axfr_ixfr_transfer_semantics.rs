@@ -3,8 +3,10 @@ mod support;
 use std::net::IpAddr;
 use std::sync::Arc;
 
+use synvoid_dns::runtime_config::{TsigAlgorithmRuntime, TsigRuntimeKey};
 use synvoid_dns::server::{DnsZoneRecord, RecordType, ShardedZoneStore, Zone};
-use synvoid_dns::transfer::{ZoneTransfer, IXFR_QUERY_TYPE};
+use synvoid_dns::transfer::{TransferAcl, ZoneTransfer, IXFR_QUERY_TYPE};
+use synvoid_dns::tsig::TsigVerifier;
 
 use support::query::encode_qname;
 use support::zone::{update_soa_value, zone_with_records, zone_with_soa};
@@ -127,6 +129,17 @@ fn parse_axfr_messages(messages: &[Vec<u8>]) -> Vec<Vec<ParsedRecord>> {
     all
 }
 
+fn test_verifier() -> Arc<TsigVerifier> {
+    Arc::new(
+        TsigVerifier::new(vec![TsigRuntimeKey {
+            name: "transfer-key".to_string(),
+            secret: b"transfer-key-secret-material-0123456789".to_vec(),
+            algorithm: TsigAlgorithmRuntime::HmacSha256,
+        }])
+        .expect("test TSIG key"),
+    )
+}
+
 fn make_transfer(
     zones: Arc<ShardedZoneStore>,
     allowed: Vec<String>,
@@ -134,10 +147,15 @@ fn make_transfer(
     require_tsig: bool,
     tcp_only: bool,
 ) -> ZoneTransfer {
+    let verifier = if require_tsig {
+        Some(test_verifier())
+    } else {
+        None
+    };
     ZoneTransfer::with_security_config(
         zones,
-        allowed,
-        None,
+        TransferAcl::from_entries(&allowed),
+        verifier,
         false,
         false,
         true,
@@ -146,6 +164,7 @@ fn make_transfer(
         axfr_enabled,
         tcp_only,
     )
+    .expect("a handler whose policy matches its verifier must construct")
 }
 
 fn make_transfer_ixfr(
@@ -153,19 +172,21 @@ fn make_transfer_ixfr(
     allowed: Vec<String>,
     ixfr_enabled: bool,
     ixfr_fallback: bool,
+    axfr_enabled: bool,
 ) -> ZoneTransfer {
     ZoneTransfer::with_security_config(
         zones,
-        allowed,
+        TransferAcl::from_entries(&allowed),
         None,
         false,
         false,
         ixfr_enabled,
         ixfr_fallback,
         false,
-        false,
+        axfr_enabled,
         true,
     )
+    .expect("no TSIG required")
 }
 
 #[test]
@@ -252,7 +273,7 @@ fn axfr_over_udp_refused_when_tcp_only() {
         false,
     );
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("TCP"));
+    assert!(result.unwrap_err().to_string().contains("TCP"));
 }
 
 #[test]
@@ -270,7 +291,7 @@ fn axfr_require_tsig_absent_refused() {
         true,
     );
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("TSIG"));
+    assert!(result.unwrap_err().to_string().contains("TSIG"));
 }
 
 #[test]
@@ -288,7 +309,7 @@ fn axfr_unauthorized_client_refused() {
         true,
     );
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("not allowed"));
+    assert!(result.unwrap_err().to_string().contains("not allowed"));
 }
 
 #[test]
@@ -305,7 +326,7 @@ fn axfr_unknown_zone_refused() {
         true,
     );
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("not found"));
+    assert!(result.unwrap_err().to_string().contains("not found"));
 }
 
 #[test]
@@ -352,7 +373,7 @@ fn ixfr_current_serial_returns_soa_only() {
         "example.test".to_string(),
         zone_with_records("example.test", 5),
     );
-    let transfer = make_transfer_ixfr(zones, vec!["10.0.0.1".to_string()], true, true);
+    let transfer = make_transfer_ixfr(zones, vec!["10.0.0.1".to_string()], true, true, true);
     let client: IpAddr = "10.0.0.1".parse().unwrap();
     let msgs = transfer
         .handle_ixfr_request_messages(
@@ -362,6 +383,7 @@ fn ixfr_current_serial_returns_soa_only() {
             None,
             0xCAFE,
             &build_ixfr_query("example.test", 5),
+            true,
         )
         .unwrap();
     assert_eq!(msgs.len(), 1);
@@ -397,7 +419,7 @@ fn ixfr_older_retained_serial_returns_delta() {
         "increment_serial must advance serial"
     );
     zones.insert("example.test".to_string(), z);
-    let transfer = make_transfer_ixfr(zones, vec!["10.0.0.1".to_string()], true, true);
+    let transfer = make_transfer_ixfr(zones, vec!["10.0.0.1".to_string()], true, true, true);
     let client: IpAddr = "10.0.0.1".parse().unwrap();
     let msgs = transfer
         .handle_ixfr_request_messages(
@@ -407,6 +429,7 @@ fn ixfr_older_retained_serial_returns_delta() {
             None,
             0xCAFE,
             &build_ixfr_query("example.test", old_serial),
+            true,
         )
         .unwrap();
     assert_eq!(
@@ -448,7 +471,7 @@ fn ixfr_too_old_with_fallback_returns_full_axfr() {
     let mut z = zone_with_records("example.test", 1);
     z.increment_serial_with_limit(200);
     zones.insert("example.test".to_string(), z);
-    let transfer = make_transfer_ixfr(zones, vec!["10.0.0.1".to_string()], true, true);
+    let transfer = make_transfer_ixfr(zones, vec!["10.0.0.1".to_string()], true, true, true);
     let client: IpAddr = "10.0.0.1".parse().unwrap();
     let msgs = transfer
         .handle_ixfr_request_messages(
@@ -458,6 +481,7 @@ fn ixfr_too_old_with_fallback_returns_full_axfr() {
             None,
             0xCAFE,
             &build_ixfr_query("example.test", 0),
+            true,
         )
         .unwrap();
     assert!(
@@ -476,7 +500,7 @@ fn ixfr_too_old_without_fallback_errors() {
     let mut z = zone_with_records("example.test", 1);
     z.increment_serial_with_limit(200);
     zones.insert("example.test".to_string(), z);
-    let transfer = make_transfer_ixfr(zones, vec!["10.0.0.1".to_string()], true, false);
+    let transfer = make_transfer_ixfr(zones, vec!["10.0.0.1".to_string()], true, false, false);
     let client: IpAddr = "10.0.0.1".parse().unwrap();
     let result = transfer.handle_ixfr_request_messages(
         "example.test",
@@ -485,6 +509,7 @@ fn ixfr_too_old_without_fallback_errors() {
         None,
         0xCAFE,
         &build_ixfr_query("example.test", 0),
+        true,
     );
     assert!(result.is_err());
 }
@@ -498,16 +523,17 @@ fn ixfr_require_tsig_absent_refused() {
     );
     let transfer = ZoneTransfer::with_security_config(
         zones,
-        vec!["10.0.0.1".to_string()],
-        None,
+        TransferAcl::from_entries(&["10.0.0.1".to_string()]),
+        Some(test_verifier()),
         false,
         false,
         true,
         true,
         true,
-        false,
         true,
-    );
+        true,
+    )
+    .expect("require_tsig with a verifier may be constructed");
     let client: IpAddr = "10.0.0.1".parse().unwrap();
     let result = transfer.handle_ixfr_request_messages(
         "example.test",
@@ -516,9 +542,10 @@ fn ixfr_require_tsig_absent_refused() {
         None,
         0xCAFE,
         &build_ixfr_query("example.test", 1),
+        true,
     );
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("TSIG"));
+    assert!(result.unwrap_err().to_string().contains("TSIG"));
 }
 
 #[test]
@@ -528,7 +555,7 @@ fn ixfr_malformed_soa_in_additional_section_refused() {
         "example.test".to_string(),
         zone_with_records("example.test", 1),
     );
-    let transfer = make_transfer_ixfr(zones, vec!["10.0.0.1".to_string()], true, true);
+    let transfer = make_transfer_ixfr(zones, vec!["10.0.0.1".to_string()], true, true, true);
     let client: IpAddr = "10.0.0.1".parse().unwrap();
     let mut buf = Vec::new();
     buf.extend_from_slice(&0xCAFEu16.to_be_bytes());
@@ -545,8 +572,15 @@ fn ixfr_malformed_soa_in_additional_section_refused() {
     buf.extend_from_slice(&1u16.to_be_bytes());
     buf.extend_from_slice(&0u32.to_be_bytes());
     buf.extend_from_slice(&0u16.to_be_bytes());
-    let _ =
-        transfer.handle_ixfr_request_messages("example.test", client, Some(1), None, 0xCAFE, &buf);
+    let _ = transfer.handle_ixfr_request_messages(
+        "example.test",
+        client,
+        Some(1),
+        None,
+        0xCAFE,
+        &buf,
+        true,
+    );
 }
 
 #[test]
@@ -564,7 +598,7 @@ fn ixfr_serial_wraparound_fallback() {
     z.increment_serial_with_limit(200);
     let current_serial = z.serial;
     zones.insert("example.test".to_string(), z);
-    let transfer = make_transfer_ixfr(zones, vec!["10.0.0.1".to_string()], true, true);
+    let transfer = make_transfer_ixfr(zones, vec!["10.0.0.1".to_string()], true, true, true);
     let client: IpAddr = "10.0.0.1".parse().unwrap();
     let msgs = transfer
         .handle_ixfr_request_messages(
@@ -574,6 +608,7 @@ fn ixfr_serial_wraparound_fallback() {
             None,
             0xCAFE,
             &build_ixfr_query("example.test", current_serial),
+            true,
         )
         .unwrap();
     assert_eq!(msgs.len(), 1, "same serial must return SOA-only");

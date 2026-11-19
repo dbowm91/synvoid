@@ -1,15 +1,24 @@
+use std::fmt;
 use std::net::IpAddr;
 use std::sync::Arc;
 
 use crate::parsed_query::build_response_flags;
 use crate::server::{DnsZoneRecord, RecordType, RecordTypeExt, ShardedZoneStore, Zone};
-use crate::tsig::{TsigParseResult, TsigVerifier};
+use crate::tsig::{SignedTsig, TsigParseResult, TsigVerifier};
 use crate::wire;
 
 use crate::cache::InvalidationReason;
 
 pub const AXFR_QUERY_TYPE: u16 = 252;
 pub const IXFR_QUERY_TYPE: u16 = 251;
+
+/// Default ceiling on the bytes one transfer may put on the wire.
+///
+/// A transfer is built from memory and written to one connection, so an
+/// unbounded zone is an unbounded allocation and an unbounded write. The cap
+/// applies per zone (what one request may serialize) and per connection (the
+/// signed messages actually written).
+pub const DEFAULT_MAX_TRANSFER_BYTES: usize = 16 * 1024 * 1024;
 
 /// RFC 1982 serial arithmetic: returns true when `a` is strictly newer than
 /// `b`, accounting for u32 wraparound. Differences >= 2^31 are ambiguous and
@@ -19,9 +28,144 @@ fn serial_is_newer(a: u32, b: u32) -> bool {
     delta != 0 && delta < 0x8000_0000
 }
 
+/// Per-zone transfer authorization.
+///
+/// A client is authorized when a CIDR matches its address **and** a zone
+/// entry matches the requested origin **and** the configured key (if any)
+/// matches the verified TSIG key. The three are joint conditions: an IP entry
+/// alone no longer authorizes every zone, and a zone entry alone no longer
+/// authorizes every client (D20).
+///
+/// An empty `zones` list means "all zones"; an empty `cidrs` list means
+/// "no client" (fail closed), because a transfer without a network match has
+/// no one to authorize.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TransferAcl {
+    pub cidrs: Vec<ipnetwork::IpNetwork>,
+    pub zones: Vec<String>,
+    pub key: Option<String>,
+    /// A `"*"` entry was configured. Whether that is honoured is the separate
+    /// `allow_wildcard_transfer` policy bit.
+    pub wildcard: bool,
+}
+
+impl TransferAcl {
+    pub fn new(cidrs: Vec<ipnetwork::IpNetwork>, zones: Vec<String>, key: Option<String>) -> Self {
+        Self {
+            cidrs,
+            zones,
+            key,
+            wildcard: false,
+        }
+    }
+
+    pub fn with_wildcard(mut self, wildcard: bool) -> Self {
+        self.wildcard = wildcard;
+        self
+    }
+
+    /// Build from the flat `dns.settings.allow_transfer` entry list.
+    ///
+    /// The persisted surface is one list, so each entry is classified once:
+    /// `*` requests the wildcard, anything that parses as an address/network
+    /// is a CIDR, and everything else is a zone name. A zone entry is a zone
+    /// name, never a synonym for "any client in any zone".
+    pub fn from_entries(entries: &[String]) -> Self {
+        let mut acl = Self::default();
+        for entry in entries {
+            let entry = entry.trim();
+            if entry.is_empty() {
+                continue;
+            }
+            if entry == "*" {
+                acl.wildcard = true;
+                continue;
+            }
+            if let Ok(network) = entry.parse::<ipnetwork::IpNetwork>() {
+                acl.cidrs.push(network);
+                continue;
+            }
+            acl.zones
+                .push(entry.trim_end_matches('.').to_ascii_lowercase());
+        }
+        acl
+    }
+
+    /// True when the client's address is covered by a configured network.
+    pub fn network_matches(&self, client_ip: IpAddr) -> bool {
+        self.cidrs.iter().any(|cidr| cidr.contains(client_ip))
+    }
+
+    /// True when the origin is covered by the zone list (empty = all zones).
+    pub fn zone_matches(&self, origin: &str) -> bool {
+        if self.zones.is_empty() {
+            return true;
+        }
+        let origin = origin.trim_end_matches('.').to_ascii_lowercase();
+        self.zones.contains(&origin)
+    }
+
+    /// True when the verified key satisfies the key binding.
+    pub fn key_matches(&self, verified_key: Option<&str>) -> bool {
+        match &self.key {
+            None => true,
+            Some(required) => {
+                verified_key.is_some_and(|key| key.eq_ignore_ascii_case(required.as_str()))
+            }
+        }
+    }
+
+    /// Joint authorization: network, zone, and key must all match.
+    pub fn authorizes(&self, client_ip: IpAddr, origin: &str, verified_key: Option<&str>) -> bool {
+        self.network_matches(client_ip)
+            && self.zone_matches(origin)
+            && self.key_matches(verified_key)
+    }
+}
+
+/// A refused or failed transfer, with the RCODE the client must receive.
+///
+/// A handler that returns a bare string cannot tell the dispatcher whether to
+/// answer REFUSED, NOTAUTH, or FORMERR, so the dispatcher used to drop the
+/// connection instead. The rcode travels with the reason now.
+#[derive(Debug, Clone)]
+pub struct TransferError {
+    pub rcode: u8,
+    pub message: String,
+}
+
+impl TransferError {
+    pub fn new(rcode: u8, message: impl Into<String>) -> Self {
+        Self {
+            rcode,
+            message: message.into(),
+        }
+    }
+
+    pub fn refused(message: impl Into<String>) -> Self {
+        Self::new(wire::RCODE_REFUSED, message)
+    }
+
+    pub fn notauth(message: impl Into<String>) -> Self {
+        Self::new(wire::UPDATE_RCODE_NOTAUTH, message)
+    }
+
+    pub fn servfail(message: impl Into<String>) -> Self {
+        Self::new(wire::RCODE_SERVFAIL, message)
+    }
+}
+
+impl fmt::Display for TransferError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for TransferError {}
+
 pub struct ZoneTransfer {
     zones: Arc<ShardedZoneStore>,
-    allowed_transfers: Vec<String>,
+    acl: TransferAcl,
     tsig_verifier: Option<Arc<TsigVerifier>>,
     allow_wildcard_transfer: bool,
     wildcard_transfer_requires_tsig: bool,
@@ -34,6 +178,10 @@ pub struct ZoneTransfer {
     tcp_only: bool,
     /// Maximum number of IXFR history entries per zone.
     max_history_size: usize,
+    /// Bytes one request may serialize.
+    max_zone_transfer_bytes: usize,
+    /// Bytes one connection may carry.
+    max_transfer_bytes: usize,
     cache: Option<Arc<crate::DnsCache>>,
 }
 
@@ -45,7 +193,7 @@ impl ZoneTransfer {
     ) -> Self {
         Self {
             zones,
-            allowed_transfers,
+            acl: TransferAcl::from_entries(&allowed_transfers),
             tsig_verifier,
             allow_wildcard_transfer: false,
             wildcard_transfer_requires_tsig: true,
@@ -55,14 +203,22 @@ impl ZoneTransfer {
             axfr_enabled: false,
             tcp_only: true,
             max_history_size: 200,
+            max_zone_transfer_bytes: DEFAULT_MAX_TRANSFER_BYTES,
+            max_transfer_bytes: DEFAULT_MAX_TRANSFER_BYTES,
             cache: None,
         }
     }
 
+    /// Build a transfer handler, refusing a configuration that cannot
+    /// authenticate what it claims to.
+    ///
+    /// `require_tsig` without a verifier would accept any client that could
+    /// forge a TSIG header (D19), so it is rejected here rather than at
+    /// request time: the composition layer must fail startup.
     #[allow(clippy::too_many_arguments)]
     pub fn with_security_config(
         zones: Arc<ShardedZoneStore>,
-        allowed_transfers: Vec<String>,
+        acl: TransferAcl,
         tsig_verifier: Option<Arc<TsigVerifier>>,
         allow_wildcard_transfer: bool,
         wildcard_transfer_requires_tsig: bool,
@@ -71,20 +227,28 @@ impl ZoneTransfer {
         require_tsig: bool,
         axfr_enabled: bool,
         tcp_only: bool,
-    ) -> Self {
-        if allowed_transfers.contains(&"*".to_string()) && !allow_wildcard_transfer {
+    ) -> Result<Self, String> {
+        if require_tsig && tsig_verifier.is_none() {
+            return Err(
+                "zone transfer requires TSIG but no TSIG verifier is configured; \
+                 refusing to construct a handler that cannot authenticate"
+                    .to_string(),
+            );
+        }
+
+        if acl.wildcard && !allow_wildcard_transfer {
             tracing::warn!(
                 "Zone transfer configuration contains wildcard which is disabled by default"
             );
         }
 
-        if allowed_transfers.contains(&"*".to_string()) && wildcard_transfer_requires_tsig {
+        if acl.wildcard && wildcard_transfer_requires_tsig {
             tracing::warn!("Zone transfer wildcard requires TSIG authentication");
         }
 
-        Self {
+        Ok(Self {
             zones,
-            allowed_transfers,
+            acl,
             tsig_verifier,
             allow_wildcard_transfer,
             wildcard_transfer_requires_tsig,
@@ -94,8 +258,10 @@ impl ZoneTransfer {
             axfr_enabled,
             tcp_only,
             max_history_size: 200,
+            max_zone_transfer_bytes: DEFAULT_MAX_TRANSFER_BYTES,
+            max_transfer_bytes: DEFAULT_MAX_TRANSFER_BYTES,
             cache: None,
-        }
+        })
     }
 
     pub fn with_cache(mut self, cache: Arc<crate::DnsCache>) -> Self {
@@ -115,6 +281,14 @@ impl ZoneTransfer {
         self.axfr_enabled
     }
 
+    /// Whether this handler will answer IXFR.
+    ///
+    /// Used by `/health` to report realization: a handler whose IXFR path is
+    /// disabled must not be claimed as serving IXFR.
+    pub fn is_ixfr_enabled(&self) -> bool {
+        self.ixfr_enabled
+    }
+
     pub fn is_tcp_only(&self) -> bool {
         self.tcp_only
     }
@@ -124,99 +298,157 @@ impl ZoneTransfer {
         self
     }
 
+    /// Cap both the per-zone serialization and the per-connection write.
+    pub fn with_max_transfer_bytes(mut self, max_bytes: usize) -> Self {
+        self.max_zone_transfer_bytes = max_bytes;
+        self.max_transfer_bytes = max_bytes;
+        self
+    }
+
+    /// The cheap half of authorization: network and zone only.
+    ///
+    /// This runs before any TSIG parsing so a client that is not entitled to
+    /// the zone never costs a HMAC (phase 03 R3, phase 07 R2).
+    pub fn network_and_zone_allowed(&self, client_ip: IpAddr, origin: &str) -> bool {
+        if self.acl.wildcard {
+            return self.is_wildcard_allowed();
+        }
+        self.acl.network_matches(client_ip) && self.acl.zone_matches(origin)
+    }
+
+    /// Full authorization, including the verified key binding.
+    ///
+    /// `is_transfer_allowed` is the two-argument convenience for callers that
+    /// have no TSIG (and is therefore false for an ACL that names a key).
     pub fn is_transfer_allowed(&self, client_ip: IpAddr, origin: &str) -> bool {
-        if self.allowed_transfers.is_empty() {
+        self.is_transfer_allowed_with_key(client_ip, origin, None)
+    }
+
+    pub fn is_transfer_allowed_with_key(
+        &self,
+        client_ip: IpAddr,
+        origin: &str,
+        verified_key: Option<&str>,
+    ) -> bool {
+        if !self.network_and_zone_allowed(client_ip, origin) {
             return false;
         }
-
-        let mut wildcard_used = false;
-
-        for allowed in &self.allowed_transfers {
-            if allowed == "*" {
-                wildcard_used = true;
-                if !self.is_wildcard_allowed() {
-                    tracing::warn!(client_ip = %client_ip, "Zone transfer wildcard denied: not enabled");
-                    continue;
-                }
-                return true;
-            }
-            if let Ok(cidr) = allowed.parse::<ipnetwork::IpNetwork>() {
-                if cidr.contains(client_ip) {
-                    return true;
-                }
-            }
-            if allowed == origin {
-                return true;
-            }
-        }
-
-        if wildcard_used && self.is_wildcard_allowed() {
-            return true;
-        }
-
-        false
+        self.acl.key_matches(verified_key)
     }
 
     pub fn is_wildcard_transfer(&self, _origin: &str) -> bool {
-        for allowed in &self.allowed_transfers {
-            if allowed == "*" {
-                return true;
-            }
-        }
-        false
+        self.acl.wildcard
     }
 
-    pub fn verify_tsig(&self, tsig: &TsigParseResult, message: &[u8]) -> Result<(), String> {
-        let verifier = self
-            .tsig_verifier
-            .as_ref()
-            .ok_or_else(|| "TSIG not configured".to_string())?;
+    pub fn acl(&self) -> &TransferAcl {
+        &self.acl
+    }
 
-        verifier
-            .verify(
-                &[],
-                message,
-                &tsig.mac,
-                &tsig.key_name,
-                tsig.algorithm,
-                tsig.time_signed,
-                tsig.fudge,
-                tsig.tsig_error,
-                tsig.other_len,
+    /// Verify a request's TSIG.
+    ///
+    /// A message with a TSIG is always verified, even when `require_tsig` is
+    /// false: accepting a signature without checking it is worse than not
+    /// signing at all.
+    pub fn verify_tsig(&self, tsig: &TsigParseResult, message: &[u8]) -> Result<(), TransferError> {
+        let verifier = self.tsig_verifier.as_ref().ok_or_else(|| {
+            TransferError::refused(
+                "TSIG is present but no TSIG verifier is configured; refusing to \
+                 treat presence as authentication",
             )
-            .map_err(|e| e.to_string())
+        })?;
+
+        verifier.verify(message, tsig).map_err(|e| {
+            tracing::warn!(error = %e, "TSIG verification failed");
+            TransferError::refused(format!("TSIG verification failed: {e}"))
+        })
     }
 
-    pub fn sign_response(&self, key_name: &str, message: &[u8]) -> Result<Vec<u8>, String> {
+    /// Sign one response message, carrying `request_mac` (the request MAC for
+    /// the first message, the previous message's MAC afterwards).
+    pub fn sign_response(
+        &self,
+        key_name: &str,
+        message: &[u8],
+        request_mac: Option<&[u8]>,
+    ) -> Result<SignedTsig, TransferError> {
         let verifier = self
             .tsig_verifier
             .as_ref()
-            .ok_or_else(|| "TSIG not configured".to_string())?;
+            .ok_or_else(|| TransferError::refused("TSIG not configured"))?;
 
         verifier
-            .sign(key_name, message, 0)
-            .map_err(|e| e.to_string())
+            .sign_response(key_name, message, request_mac, 0)
+            .map_err(|e| TransferError::servfail(format!("TSIG signing failed: {e}")))
     }
 
+    /// Append the complete TSIG RR to a message and count it once.
     fn append_tsig_to_response(
         &self,
         mut response: Vec<u8>,
         key_name: &str,
-    ) -> Result<Vec<u8>, String> {
-        let signed = self.sign_response(key_name, &response)?;
-
+        request_mac: Option<&[u8]>,
+    ) -> Result<(Vec<u8>, Vec<u8>), TransferError> {
         if response.len() < 12 {
-            return Err("Response too short for TSIG".to_string());
+            return Err(TransferError::servfail("Response too short for TSIG"));
         }
 
+        let signed = self.sign_response(key_name, &response, request_mac)?;
+
         let arcount = u16::from_be_bytes([response[10], response[11]]);
-        let new_arcount = arcount + 1;
+        let new_arcount = arcount
+            .checked_add(1)
+            .ok_or_else(|| TransferError::servfail("TSIG ARCOUNT overflow"))?;
         response[10] = (new_arcount >> 8) as u8;
         response[11] = (new_arcount & 0xff) as u8;
 
-        response.extend_from_slice(&signed);
+        response.extend_from_slice(&signed.rr);
+        Ok((response, signed.mac))
+    }
 
-        Ok(response)
+    /// Sign a multi-message transfer.
+    ///
+    /// RFC 8945 §5.3.1: the first message is signed like any response (the
+    /// request MAC is in the digest); every message after the first carries
+    /// the previous message's MAC instead.
+    fn sign_transfer_messages(
+        &self,
+        responses: Vec<Vec<u8>>,
+        key_name: &str,
+        request_mac: &[u8],
+    ) -> Result<Vec<Vec<u8>>, TransferError> {
+        let mut previous_mac = request_mac.to_vec();
+        let mut signed_messages = Vec::with_capacity(responses.len());
+        let mut total = 0usize;
+
+        for response in responses {
+            let (message, mac) =
+                self.append_tsig_to_response(response, key_name, Some(&previous_mac))?;
+            previous_mac = mac;
+            total = total.saturating_add(message.len());
+            if total > self.max_transfer_bytes {
+                return Err(TransferError::servfail(
+                    "transfer exceeds the per-connection byte limit",
+                ));
+            }
+            signed_messages.push(message);
+        }
+
+        Ok(signed_messages)
+    }
+
+    fn check_zone_bytes(&self, messages: &[Vec<u8>]) -> Result<(), TransferError> {
+        let total: usize = messages.iter().map(Vec::len).sum();
+        if total > self.max_zone_transfer_bytes {
+            return Err(TransferError::servfail(
+                "zone exceeds the per-zone transfer byte limit",
+            ));
+        }
+        if total > self.max_transfer_bytes {
+            return Err(TransferError::servfail(
+                "transfer exceeds the per-connection byte limit",
+            ));
+        }
+        Ok(())
     }
 
     pub fn handle_axfr_request(
@@ -227,7 +459,7 @@ impl ZoneTransfer {
         message_id: u16,
         message: &[u8],
         is_tcp: bool,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<Vec<u8>, TransferError> {
         let messages =
             self.handle_axfr_request_impl(qname, client_ip, tsig, message_id, message, is_tcp)?;
 
@@ -247,7 +479,7 @@ impl ZoneTransfer {
         message_id: u16,
         message: &[u8],
         is_tcp: bool,
-    ) -> Result<Vec<Vec<u8>>, String> {
+    ) -> Result<Vec<Vec<u8>>, TransferError> {
         self.handle_axfr_request_impl(qname, client_ip, tsig, message_id, message, is_tcp)
     }
 
@@ -259,7 +491,7 @@ impl ZoneTransfer {
         message_id: u16,
         message: &[u8],
         is_tcp: bool,
-    ) -> Result<Vec<Vec<u8>>, String> {
+    ) -> Result<Vec<Vec<u8>>, TransferError> {
         // AXFR disabled by default for security
         if !self.axfr_enabled {
             tracing::debug!(
@@ -267,7 +499,7 @@ impl ZoneTransfer {
                 client_ip = %client_ip,
                 "AXFR request denied: AXFR not enabled"
             );
-            return Err("AXFR not enabled".to_string());
+            return Err(TransferError::refused("AXFR not enabled"));
         }
 
         // AXFR requires TCP per RFC 5936 §2
@@ -277,81 +509,66 @@ impl ZoneTransfer {
                 client_ip = %client_ip,
                 "AXFR request denied: TCP required"
             );
-            return Err("AXFR requires TCP transport".to_string());
+            return Err(TransferError::refused("AXFR requires TCP transport"));
         }
 
         let origin = qname.trim_end_matches('.');
 
-        if !self.is_transfer_allowed(client_ip, origin) {
+        // Cheap ACL rejection before any TSIG work (phase 03 R3).
+        if !self.network_and_zone_allowed(client_ip, origin) {
             tracing::warn!(
                 zone = %origin,
                 client_ip = %client_ip,
                 "AXFR request denied: not in allowed list"
             );
-            return Err("Zone transfer not allowed".to_string());
+            return Err(TransferError::refused("Zone transfer not allowed"));
         }
 
-        if self.is_wildcard_transfer(origin) && self.wildcard_requires_tsig() && tsig.is_none() {
+        if self.acl.wildcard && self.wildcard_requires_tsig() && tsig.is_none() {
             tracing::warn!(
                 zone = %origin,
                 client_ip = %client_ip,
                 "AXFR request denied: wildcard requires TSIG"
             );
-            return Err("Zone transfer requires TSIG authentication".to_string());
+            return Err(TransferError::refused(
+                "Zone transfer requires TSIG authentication",
+            ));
         }
 
-        if self.require_tsig && tsig.is_none() {
+        let verified_key = self.verify_request_tsig(origin, client_ip, tsig, message)?;
+
+        if !self.acl.key_matches(verified_key.as_deref()) {
             tracing::warn!(
                 zone = %origin,
                 client_ip = %client_ip,
-                "AXFR request denied: TSIG required"
+                "AXFR request denied: TSIG key not authorized"
             );
-            return Err("Zone transfer requires TSIG authentication".to_string());
+            return Err(TransferError::refused(
+                "Zone transfer not allowed for this TSIG key",
+            ));
         }
 
-        let tsig_key_name = tsig.as_ref().map(|t| t.key_name.clone());
-        let tsig_configured = self.tsig_verifier.is_some();
-
-        let tsig_status = if tsig.is_some() {
-            "TSIG secured"
-        } else {
-            "unsecured"
-        };
         tracing::info!(
             zone = %origin,
             client_ip = %client_ip,
-            tsig_status = %tsig_status,
+            tsig_status = if verified_key.is_some() { "TSIG secured" } else { "unsecured" },
             "AXFR transfer started"
         );
 
-        if let Some(tsig) = tsig {
-            if let Some(verifier) = &self.tsig_verifier {
-                if let Err(e) = verifier.verify(
-                    &[],
-                    message,
-                    &tsig.mac,
-                    &tsig.key_name,
-                    tsig.algorithm,
-                    tsig.time_signed,
-                    tsig.fudge,
-                    tsig.tsig_error,
-                    tsig.other_len,
-                ) {
-                    tracing::warn!(
-                        zone = %origin,
-                        client_ip = %client_ip,
-                        error = %e,
-                        "TSIG verification failed for AXFR"
-                    );
-                    return Err(format!("TSIG verification failed: {}", e));
-                }
-            }
+        // A single-response API cannot carry a multi-message transfer; the
+        // client must retry over TCP (RFC 5936 §2).
+        if !is_tcp {
+            return Ok(vec![Self::build_truncated_transfer_response(
+                qname,
+                AXFR_QUERY_TYPE,
+                message_id,
+            )]);
         }
 
         let zone = self
             .zones
             .get(origin)
-            .ok_or_else(|| "Zone not found".to_string())?;
+            .ok_or_else(|| TransferError::notauth("Zone not found"))?;
 
         let mut responses = Vec::new();
 
@@ -388,6 +605,8 @@ impl ZoneTransfer {
             ));
         }
 
+        self.check_zone_bytes(&responses)?;
+
         tracing::info!(
             zone = %origin,
             client_ip = %client_ip,
@@ -399,21 +618,69 @@ impl ZoneTransfer {
             cache.invalidate_zone(origin, InvalidationReason::ZoneTransferAxfr);
         }
 
-        if tsig_configured {
-            if let Some(ref key_name) = tsig_key_name {
-                let signed_responses = responses
-                    .into_iter()
-                    .map(|resp| self.append_tsig_to_response(resp, key_name))
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(signed_responses)
-            } else {
-                Ok(responses)
+        match (verified_key.as_deref(), tsig) {
+            (Some(key_name), Some(request)) => {
+                self.sign_transfer_messages(responses, key_name, &request.mac)
             }
-        } else {
-            Ok(responses)
+            _ => Ok(responses),
         }
     }
 
+    /// Presence implies verification: a request with a TSIG is verified even
+    /// when `require_tsig` is false, and a request without one is refused when
+    /// it is true. Returns the verified key name, if any.
+    fn verify_request_tsig(
+        &self,
+        origin: &str,
+        client_ip: IpAddr,
+        tsig: Option<&TsigParseResult>,
+        message: &[u8],
+    ) -> Result<Option<String>, TransferError> {
+        match tsig {
+            Some(tsig) => {
+                if let Err(e) = self.verify_tsig(tsig, message) {
+                    tracing::warn!(
+                        zone = %origin,
+                        client_ip = %client_ip,
+                        error = %e,
+                        "TSIG verification failed"
+                    );
+                    return Err(e);
+                }
+                Ok(Some(tsig.key_name.clone()))
+            }
+            None if self.require_tsig => {
+                tracing::warn!(
+                    zone = %origin,
+                    client_ip = %client_ip,
+                    "transfer denied: TSIG required"
+                );
+                Err(TransferError::refused(
+                    "Zone transfer requires TSIG authentication",
+                ))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn build_truncated_transfer_response(qname: &str, qtype: u16, message_id: u16) -> Vec<u8> {
+        let qname_wire = wire::encode_name(qname).unwrap_or_else(|_| vec![0u8]);
+        let mut response = Vec::with_capacity(12 + qname_wire.len() + 4);
+        response.extend_from_slice(&message_id.to_be_bytes());
+        response.extend_from_slice(
+            &build_response_flags(true, true, false, false, false, 0).to_be_bytes(),
+        );
+        response.extend_from_slice(&1u16.to_be_bytes());
+        response.extend_from_slice(&0u16.to_be_bytes());
+        response.extend_from_slice(&0u16.to_be_bytes());
+        response.extend_from_slice(&0u16.to_be_bytes());
+        response.extend_from_slice(&qname_wire);
+        response.extend_from_slice(&qtype.to_be_bytes());
+        response.extend_from_slice(&1u16.to_be_bytes());
+        response
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn handle_ixfr_request(
         &self,
         qname: &str,
@@ -422,9 +689,11 @@ impl ZoneTransfer {
         tsig: Option<&TsigParseResult>,
         message_id: u16,
         message: &[u8],
-    ) -> Result<Vec<u8>, String> {
-        let messages =
-            self.handle_ixfr_request_impl(qname, client_ip, serial, tsig, message_id, message)?;
+        is_tcp: bool,
+    ) -> Result<Vec<u8>, TransferError> {
+        let messages = self.handle_ixfr_request_impl(
+            qname, client_ip, serial, tsig, message_id, message, is_tcp,
+        )?;
 
         let mut combined = Vec::new();
         for resp in messages {
@@ -434,6 +703,7 @@ impl ZoneTransfer {
         Ok(combined)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn handle_ixfr_request_messages(
         &self,
         qname: &str,
@@ -442,10 +712,12 @@ impl ZoneTransfer {
         tsig: Option<&TsigParseResult>,
         message_id: u16,
         message: &[u8],
-    ) -> Result<Vec<Vec<u8>>, String> {
-        self.handle_ixfr_request_impl(qname, client_ip, serial, tsig, message_id, message)
+        is_tcp: bool,
+    ) -> Result<Vec<Vec<u8>>, TransferError> {
+        self.handle_ixfr_request_impl(qname, client_ip, serial, tsig, message_id, message, is_tcp)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_ixfr_request_impl(
         &self,
         qname: &str,
@@ -454,80 +726,72 @@ impl ZoneTransfer {
         tsig: Option<&TsigParseResult>,
         message_id: u16,
         message: &[u8],
-    ) -> Result<Vec<Vec<u8>>, String> {
+        is_tcp: bool,
+    ) -> Result<Vec<Vec<u8>>, TransferError> {
         if !self.ixfr_enabled {
             tracing::debug!(zone = %qname, client_ip = %client_ip, "IXFR request denied: IXFR not enabled");
-            return Err("IXFR not enabled".to_string());
+            return Err(TransferError::refused("IXFR not enabled"));
         }
 
         let origin = qname.trim_end_matches('.');
 
-        if !self.is_transfer_allowed(client_ip, origin) {
+        // IXFR obeys the same authorization as AXFR (D21).
+        if !self.network_and_zone_allowed(client_ip, origin) {
             tracing::warn!(
                 zone = %origin,
                 client_ip = %client_ip,
                 "IXFR request denied: not in allowed list"
             );
-            return Err("Zone transfer not allowed".to_string());
+            return Err(TransferError::refused("Zone transfer not allowed"));
         }
 
-        if self.is_wildcard_transfer(origin) && self.wildcard_requires_tsig() && tsig.is_none() {
+        if self.acl.wildcard && self.wildcard_requires_tsig() && tsig.is_none() {
             tracing::warn!(
                 zone = %origin,
                 client_ip = %client_ip,
                 "IXFR request denied: wildcard requires TSIG"
             );
-            return Err("Zone transfer requires TSIG authentication".to_string());
+            return Err(TransferError::refused(
+                "Zone transfer requires TSIG authentication",
+            ));
         }
 
-        if self.require_tsig && tsig.is_none() {
+        let verified_key = self.verify_request_tsig(origin, client_ip, tsig, message)?;
+
+        if !self.acl.key_matches(verified_key.as_deref()) {
             tracing::warn!(
                 zone = %origin,
                 client_ip = %client_ip,
-                "IXFR request denied: TSIG required"
+                "IXFR request denied: TSIG key not authorized"
             );
-            return Err("Zone transfer requires TSIG authentication".to_string());
+            return Err(TransferError::refused(
+                "Zone transfer not allowed for this TSIG key",
+            ));
         }
 
-        let tsig_key_name = tsig.as_ref().map(|t| t.key_name.clone());
-        let tsig_configured = self.tsig_verifier.is_some();
-
-        let tsig_status = if tsig.is_some() {
-            "TSIG secured"
-        } else {
-            "unsecured"
-        };
         tracing::info!(
             zone = %origin,
             client_ip = %client_ip,
             serial = ?serial,
-            tsig_status = %tsig_status,
+            tsig_status = if verified_key.is_some() { "TSIG secured" } else { "unsecured" },
             "IXFR transfer started"
         );
 
-        if let Some(tsig) = tsig {
-            if let Some(verifier) = &self.tsig_verifier {
-                if let Err(e) = verifier.verify(
-                    &[],
-                    message,
-                    &tsig.mac,
-                    &tsig.key_name,
-                    tsig.algorithm,
-                    tsig.time_signed,
-                    tsig.fudge,
-                    tsig.tsig_error,
-                    tsig.other_len,
-                ) {
-                    tracing::warn!(zone = %origin, client_ip = %client_ip, error = %e, "TSIG verification failed for IXFR");
-                    return Err(format!("TSIG verification failed: {}", e));
-                }
-            }
+        // RFC 1995 §2: IXFR over UDP is attempted once; a response that does
+        // not fit is truncated and the client retries over TCP. Concatenating
+        // the whole transfer into one datagram is not an option.
+        if !is_tcp {
+            return Ok(vec![Self::build_truncated_transfer_response(
+                qname,
+                IXFR_QUERY_TYPE,
+                message_id,
+            )]);
         }
 
         let zone = self
             .zones
             .get(origin)
-            .ok_or_else(|| "Zone not found".to_string())?;
+            .ok_or_else(|| TransferError::notauth("Zone not found"))?;
         let current_serial = zone.serial;
         let client_serial = serial.unwrap_or(0);
 
@@ -535,9 +799,12 @@ impl ZoneTransfer {
             vec![self.build_ixfr_current_response(qname, &zone, message_id)?]
         } else if client_serial == 0 || serial_is_newer(client_serial, current_serial) {
             if self.ixfr_fallback_to_axfr {
+                self.require_axfr_for_fallback()?;
                 self.build_ixfr_full_response_messages(qname, &zone, message_id)?
             } else {
-                return Err("IXFR cannot proceed: client has newer serial".to_string());
+                return Err(TransferError::refused(
+                    "IXFR cannot proceed: client has newer serial",
+                ));
             }
         } else if let Some(old_version) = zone.get_previous_version(client_serial) {
             self.build_ixfr_incremental_response_messages(
@@ -547,10 +814,15 @@ impl ZoneTransfer {
                 message_id,
             )?
         } else if self.ixfr_fallback_to_axfr {
+            self.require_axfr_for_fallback()?;
             self.build_ixfr_full_response_messages(qname, &zone, message_id)?
         } else {
-            return Err("IXFR cannot proceed: no history available".to_string());
+            return Err(TransferError::refused(
+                "IXFR cannot proceed: no history available",
+            ));
         };
+
+        self.check_zone_bytes(&responses)?;
 
         tracing::info!(
             zone = %origin,
@@ -563,18 +835,24 @@ impl ZoneTransfer {
             cache.invalidate_zone(origin, InvalidationReason::ZoneTransferIxfr);
         }
 
-        if tsig_configured {
-            if let Some(ref key_name) = tsig_key_name {
-                let signed_responses = responses
-                    .into_iter()
-                    .map(|resp| self.append_tsig_to_response(resp, key_name))
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(signed_responses)
-            } else {
-                Ok(responses)
+        match (verified_key.as_deref(), tsig) {
+            (Some(key_name), Some(request)) => {
+                self.sign_transfer_messages(responses, key_name, &request.mac)
             }
+            _ => Ok(responses),
+        }
+    }
+
+    /// An IXFR fallback is an AXFR. It must be enabled explicitly, or the
+    /// handler would serve a full zone dump through a path the operator never
+    /// turned on (D21).
+    fn require_axfr_for_fallback(&self) -> Result<(), TransferError> {
+        if self.axfr_enabled {
+            Ok(())
         } else {
-            Ok(responses)
+            Err(TransferError::refused(
+                "IXFR fallback requires AXFR to be enabled",
+            ))
         }
     }
 
@@ -583,10 +861,12 @@ impl ZoneTransfer {
         qname: &str,
         zone: &Zone,
         message_id: u16,
-    ) -> Result<Vec<Vec<u8>>, String> {
+    ) -> Result<Vec<Vec<u8>>, TransferError> {
         let mut responses = Vec::new();
 
-        let soa_record = self.find_soa_record(zone).ok_or("Zone has no SOA record")?;
+        let soa_record = self
+            .find_soa_record(zone)
+            .ok_or_else(|| TransferError::servfail("Zone has no SOA record"))?;
         responses.push(self.build_axfr_first_message(
             qname,
             std::slice::from_ref(&soa_record),
@@ -625,10 +905,10 @@ impl ZoneTransfer {
         zone: &Zone,
         old_records: &std::collections::HashMap<(String, RecordType), Vec<DnsZoneRecord>>,
         message_id: u16,
-    ) -> Result<Vec<Vec<u8>>, String> {
+    ) -> Result<Vec<Vec<u8>>, TransferError> {
         let current_soa = self
             .find_soa_record(zone)
-            .ok_or("Zone has no SOA record")?
+            .ok_or_else(|| TransferError::servfail("Zone has no SOA record"))?
             .clone();
 
         let old_soa = old_records
@@ -699,6 +979,9 @@ impl ZoneTransfer {
         ancount: u16,
         message_id: u16,
     ) -> Vec<u8> {
+        // The question name is an absolute name; a malformed one can only come
+        // from a query the parser already accepted, so fall back to the root.
+        let qname_wire = wire::encode_name(qname).unwrap_or_else(|_| vec![0u8]);
         let mut response = Vec::new();
 
         response.extend_from_slice(&message_id.to_be_bytes());
@@ -710,12 +993,12 @@ impl ZoneTransfer {
         response.extend_from_slice(&0u16.to_be_bytes());
         response.extend_from_slice(&0u16.to_be_bytes());
 
-        response.extend_from_slice(&wire::encode_name(qname));
+        response.extend_from_slice(&qname_wire);
         response.extend_from_slice(&IXFR_QUERY_TYPE.to_be_bytes());
         response.extend_from_slice(&1u16.to_be_bytes());
 
         if let Some(soa_record) = soa {
-            response.extend_from_slice(&wire::encode_name(qname));
+            response.extend_from_slice(&qname_wire);
             response.extend_from_slice(&6u16.to_be_bytes());
             response.extend_from_slice(&1u16.to_be_bytes());
             response.extend_from_slice(&soa_record.ttl.to_be_bytes());
@@ -750,8 +1033,11 @@ impl ZoneTransfer {
         qname: &str,
         zone: &Zone,
         message_id: u16,
-    ) -> Result<Vec<u8>, String> {
-        let soa = self.find_soa_record(zone).ok_or("Zone has no SOA record")?;
+    ) -> Result<Vec<u8>, TransferError> {
+        let soa = self
+            .find_soa_record(zone)
+            .ok_or_else(|| TransferError::servfail("Zone has no SOA record"))?;
+        let qname_wire = wire::encode_name(qname).unwrap_or_else(|_| vec![0u8]);
 
         let mut response = Vec::new();
         response.extend_from_slice(&message_id.to_be_bytes());
@@ -763,11 +1049,11 @@ impl ZoneTransfer {
         response.extend_from_slice(&0u16.to_be_bytes());
         response.extend_from_slice(&0u16.to_be_bytes());
 
-        response.extend_from_slice(&wire::encode_name(qname));
+        response.extend_from_slice(&qname_wire);
         response.extend_from_slice(&IXFR_QUERY_TYPE.to_be_bytes());
         response.extend_from_slice(&1u16.to_be_bytes());
 
-        response.extend_from_slice(&wire::encode_name(qname));
+        response.extend_from_slice(&qname_wire);
         response.extend_from_slice(&6u16.to_be_bytes());
         response.extend_from_slice(&1u16.to_be_bytes());
         response.extend_from_slice(&soa.ttl.to_be_bytes());
@@ -872,6 +1158,7 @@ impl ZoneTransfer {
         records: &[DnsZoneRecord],
         message_id: u16,
     ) -> Vec<u8> {
+        let qname_wire = wire::encode_name(qname).unwrap_or_else(|_| vec![0u8]);
         let mut response = Vec::new();
 
         response.extend_from_slice(&message_id.to_be_bytes());
@@ -888,13 +1175,13 @@ impl ZoneTransfer {
         response.extend_from_slice(&0u16.to_be_bytes());
         response.extend_from_slice(&0u16.to_be_bytes());
 
-        response.extend_from_slice(&wire::encode_name(qname));
+        response.extend_from_slice(&qname_wire);
 
         response.extend_from_slice(&record_type.to_u16().to_be_bytes());
         response.extend_from_slice(&1u16.to_be_bytes());
 
         for record in records {
-            response.extend_from_slice(&wire::encode_name(qname));
+            response.extend_from_slice(&qname_wire);
 
             response.extend_from_slice(&record.record_type.to_u16().to_be_bytes());
             response.extend_from_slice(&1u16.to_be_bytes());
@@ -903,7 +1190,10 @@ impl ZoneTransfer {
             match record.record_type {
                 RecordType::A => {
                     if let Ok(ip) = record.value.parse::<std::net::Ipv4Addr>() {
-                        response.extend_from_slice(&2u16.to_be_bytes());
+                        // RDLENGTH is the RDATA length: four octets, not the
+                        // address family number. A short length here made the
+                        // following record start inside this one.
+                        response.extend_from_slice(&4u16.to_be_bytes());
                         response.extend_from_slice(&ip.octets());
                     }
                 }
@@ -913,13 +1203,21 @@ impl ZoneTransfer {
                         response.extend_from_slice(&ip.octets());
                     }
                 }
-                RecordType::CNAME | RecordType::NS | RecordType::SOA => {
+                RecordType::SOA => {
+                    // An SOA RDATA is two names plus five 32-bit fields.
+                    // Encoding it through the single-name branch produced a
+                    // record no secondary could parse.
+                    let rdata = Self::build_soa_rdata(&record.value);
+                    response.extend_from_slice(&(rdata.len() as u16).to_be_bytes());
+                    response.extend_from_slice(&rdata);
+                }
+                RecordType::CNAME | RecordType::NS => {
                     let mut target_parts: Vec<&str> =
                         record.value.split('.').filter(|s| !s.is_empty()).collect();
                     if target_parts.is_empty() {
                         target_parts.push("");
                     }
-                    let mut total_len = 0;
+                    let mut total_len = 1; // root label
                     for part in &target_parts {
                         total_len += 1 + part.len();
                     }
@@ -928,6 +1226,7 @@ impl ZoneTransfer {
                         response.push((*part).len() as u8);
                         response.extend_from_slice(part.as_bytes());
                     }
+                    response.push(0);
                 }
                 RecordType::TXT => {
                     let txt = record.value.as_bytes();
@@ -945,17 +1244,20 @@ impl ZoneTransfer {
                 }
                 RecordType::MX => {
                     let priority = record.priority.unwrap_or(10);
-                    response.extend_from_slice(&2u16.to_be_bytes());
-                    response.extend_from_slice(&priority.to_be_bytes());
+                    let mut rdata = Vec::new();
+                    rdata.extend_from_slice(&priority.to_be_bytes());
                     let mut target_parts: Vec<&str> =
                         record.value.split('.').filter(|s| !s.is_empty()).collect();
                     if target_parts.is_empty() {
                         target_parts.push("");
                     }
                     for part in &target_parts {
-                        response.push((*part).len() as u8);
-                        response.extend_from_slice(part.as_bytes());
+                        rdata.push((*part).len() as u8);
+                        rdata.extend_from_slice(part.as_bytes());
                     }
+                    rdata.push(0);
+                    response.extend_from_slice(&(rdata.len() as u16).to_be_bytes());
+                    response.extend_from_slice(&rdata);
                 }
                 RecordType::SRV => {
                     let parts: Vec<&str> = record.value.split_whitespace().collect();
@@ -963,10 +1265,10 @@ impl ZoneTransfer {
                         let priority: u16 = parts[0].parse().unwrap_or(0);
                         let weight: u16 = parts[1].parse().unwrap_or(0);
                         let port: u16 = parts[2].parse().unwrap_or(0);
-                        response.extend_from_slice(&6u16.to_be_bytes());
-                        response.extend_from_slice(&priority.to_be_bytes());
-                        response.extend_from_slice(&weight.to_be_bytes());
-                        response.extend_from_slice(&port.to_be_bytes());
+                        let mut rdata = Vec::new();
+                        rdata.extend_from_slice(&priority.to_be_bytes());
+                        rdata.extend_from_slice(&weight.to_be_bytes());
+                        rdata.extend_from_slice(&port.to_be_bytes());
                         let target = parts[3];
                         let mut target_parts: Vec<&str> =
                             target.split('.').filter(|s| !s.is_empty()).collect();
@@ -974,9 +1276,12 @@ impl ZoneTransfer {
                             target_parts.push("");
                         }
                         for part in &target_parts {
-                            response.push((*part).len() as u8);
-                            response.extend_from_slice(part.as_bytes());
+                            rdata.push((*part).len() as u8);
+                            rdata.extend_from_slice(part.as_bytes());
                         }
+                        rdata.push(0);
+                        response.extend_from_slice(&(rdata.len() as u16).to_be_bytes());
+                        response.extend_from_slice(&rdata);
                     }
                 }
                 RecordType::PTR => {
@@ -985,7 +1290,7 @@ impl ZoneTransfer {
                     if target_parts.is_empty() {
                         target_parts.push("");
                     }
-                    let mut total_len = 0;
+                    let mut total_len = 1; // root label
                     for part in &target_parts {
                         total_len += 1 + part.len();
                     }
@@ -994,6 +1299,7 @@ impl ZoneTransfer {
                         response.push((*part).len() as u8);
                         response.extend_from_slice(part.as_bytes());
                     }
+                    response.push(0);
                 }
                 RecordType::DNSKEY => {
                     if let Ok(key_bytes) = hex::decode(&record.value) {
@@ -1148,7 +1454,7 @@ mod tests {
             false,
         );
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("not enabled"));
+        assert!(result.unwrap_err().to_string().contains("not enabled"));
     }
 
     #[test]
@@ -1156,7 +1462,7 @@ mod tests {
         let zones = Arc::new(ShardedZoneStore::new());
         let transfer = ZoneTransfer::with_security_config(
             zones,
-            vec!["*".to_string()],
+            TransferAcl::from_entries(&["*".to_string()]),
             None,
             true,
             true,
@@ -1165,7 +1471,8 @@ mod tests {
             false,
             true, // axfr_enabled
             true, // tcp_only
-        );
+        )
+        .expect("a handler without require_tsig may be constructed without a verifier");
         let result = transfer.handle_axfr_request(
             "example.com",
             "192.168.1.1".parse().unwrap(),
@@ -1175,7 +1482,7 @@ mod tests {
             false, // not TCP
         );
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("TCP transport"));
+        assert!(result.unwrap_err().to_string().contains("TCP transport"));
     }
 
     #[test]

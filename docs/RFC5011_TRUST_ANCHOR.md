@@ -1,391 +1,101 @@
-# RFC 5011 Trust Anchor Management in SynVoid
+# DNSSEC Trust Anchors in SynVoid
 
-> **Related Documentation:** [DNS & DNSSEC Architecture](dns-dnssec-architecture.md) | [WAF Mesh](WAF_MESH.md) | [Troubleshooting](TROUBLESHOOTING.md)
+> **Related Documentation:** [DNS & DNSSEC Architecture](dns-dnssec-architecture.md) | [DNS Architecture](../architecture/dns.md) | [Troubleshooting](TROUBLESHOOTING.md)
 
-## Table of Contents
+## Summary
 
-1. [What is RFC 5011?](#what-is-rfc-5011)
-2. [Trust Anchor State Machine](#trust-anchor-state-machine)
-3. [Configuration Options](#configuration-options)
-4. [How It Works](#how-it-works)
-5. [Debugging Trust Anchor Issues](#debugging-trust-anchor-issues)
-6. [Security Considerations](#security-considerations)
-7. [Relationship to DNSSEC Validation](#relationship-to-dnssec-validation)
-8. [Initial Trust Anchor File Format](#initial-trust-anchor-file-format)
+SynVoid uses **static DNSSEC trust anchors**: a file is read once at startup and
+is the only anchor source. There is no automated anchor management.
 
----
+**RFC 5011 automated trust-anchor management is not implemented.** It was
+designed and partially built (`TrustAnchorManager` with `Seen → Pending → Valid`
+promotion, a CDS-driven `trust_anchor_check`, a `[dns.trust_anchors]` lifecycle
+configuration, and a background update task), then removed by decision **T5**
+because nothing ever fed the state machine and nothing ever consumed its output:
 
-This document describes RFC 5011 automated trust anchor management implementation in SynVoid for DNSSEC validation.
+- `start_rfc5011_updates` had no caller, so the manager never observed the root
+  DNSKEY RRset.
+- The recursor's anchors were a startup snapshot, so a promotion or a revocation
+  never reached validation.
+- The state machine accepted a self-referential CDS as proof that a new key was
+  trusted, and honoured the REVOKE bit from an observation whose
+  `authentic_data` flag was captured but never consulted.
 
-## What is RFC 5011?
+Carrying a state machine that cannot change a single validation decision is
+worse than not having one: an operator would believe anchor rollover was
+automatic. The code was deleted rather than left as a warning-shaped feature.
 
-RFC 5011 defines an automated mechanism for managing DNSSEC trust anchors without requiring manual intervention when keys are added, removed, or rotated in a secure zone.
-
-Traditionally, DNSSEC required operators to manually update trust anchors whenever zone keys changed. RFC 5011 solves this by establishing a state machine that allows keys to be securely promoted to trusted status through a combination of:
-
-- **Direct observation** of the DNSKEY RRset
-- **Validation via CDS/CDNSKEY records** published by the zone itself
-- **Time-based observation periods** to detect key compromises
-
-SynVoid ships an RFC 5011 state machine (`crates/synvoid-dns/src/trust_anchor.rs`)
-for the root zone. It is **off by default**: `trust_anchors.enabled` defaults to
-`false`, and setting it to `true` is currently rejected by config validation (see
-the note under [Configuration Options](#configuration-options)).
-
-## Trust Anchor State Machine
-
-Keys progress through the following states based on RFC 5011:
-
-```
-                      ┌─────────────────────────────────────────────────────────────┐
-                      │                                                             │
-                      ▼                                                             │
-    ┌─────────┐   observe   ┌─────────┐   trust_anchor   ┌───────────┐   observe   │
-    │  Seen   │───DNSKEY────│  Seen   │───check()────────▶│  Pending  │──period────▶│
-    └─────────┘             └─────────┘   (CDS digest     └───────────┘   complete   │
-                                    matches)                 │                 │
-                                                                │                 │
-                                                                ▼                 ▼
-                                                           ┌─────────┐     ┌─────────┐
-                                                           │  Valid  │◀────│ Pending │
-                                                           │ (trusted)│     └─────────┘
-                                                           └─────────┘
-                                                               │
-                                                               │ REVOKE bit observed
-                                                               ▼
-                                                           ┌──────────┐   grace period   ┌─────────┐
-                                                           │ Revoked  │───────30d─────────▶│ Removed │
-                                                           └──────────┘                    └─────────┘
-                                                                                                │
-                                                                                         extended removal
-                                                                                         period (60d default)
-                                                                                                │
-                                ┌───────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-                          ┌─────────┐
-                          │ Purged  │ (removed from storage)
-                          └─────────┘
-
-    Also:
-    ┌─────────┐   not seen for   ┌──────────┐   reappears   ┌───────────┐
-    │  Valid  │───retention──────▶│  Missing │───DNSKEY─────▶│  Pending │
-    └─────────┘   period          └──────────┘                └───────────┘
-```
-
-### State Descriptions
-
-| State | Description |
-|-------|-------------|
-| **Seen** | Key observed in DNSKEY RRset but not yet validated via CDS/CDNSKEY (RFC 5011 Section 3). Not trusted for validation. |
-| **Pending** | Key validated via CDS/CDNSKEY digest, awaiting the observation period (default: 30 days). Not yet trusted for validation. |
-| **Valid** | Key is fully trusted and actively used for DNSSEC validation. |
-| **Revoked** | Key has the REVOKE bit set (RFC 5011 Section 4). No longer used for validation but pending removal confirmation. |
-| **Removed** | Key was removed from the zone, waiting for the extended removal confirmation period before purging. |
-| **Missing** | A previously Valid key has not been seen for the retention period (default: 7 days). Can be automatically restored if the key reappears. |
-| **Purged** | Key has been removed from storage after the extended removal period. A new instance would start as Seen if re-observed. |
-
-### Supported Algorithms
-
-SynVoid only accepts modern DNSSEC algorithms. Deprecated algorithms are rejected:
-
-| Algorithm | Name | Status |
-|-----------|------|--------|
-| 0 | DELETE | Rejected |
-| 3 | DSA | Rejected |
-| 5 | RSASHA1 | Rejected |
-| 6 | DSA-NSEC3-SHA1 | Rejected |
-| 8 | RSASHA256 | Accepted |
-| 13 | ECDSAP256SHA256 | Accepted |
-| 14 | ECDSAP384SHA384 | Accepted |
-| 15 | ED25519 | Accepted |
-| 16 | ED448 | Accepted |
-
-`TrustAnchorManager::observe_dnskey_at_root` rejects only algorithms
-`0 | 3 | 5 | 6` (`matches!(algorithm, 0 | 3 | 5 | 6)`); every other algorithm
-number is admitted.
-
-## Configuration Options
-
-Trust anchor behavior is controlled via the `TrustAnchorConfig` struct, which
-lives at **`[dns.trust_anchors]`** — a direct child of `[dns]`, sibling to
-`[dns.recursive]`. It is *not* `[dns.recursive.trust_anchors]`.
-
-> **Currently unreachable (Phase 45, fail-closed).** `TrustAnchorConfig::validate`
-> returns a typed `Unsupported` error whenever `enabled = true`, because no
-> custom trust-anchor manager is wired to the runtime resolver. Activation is
-> **rejected at config-load time**, so the examples below do not start. The state
-> machine in `crates/synvoid-dns/src/trust_anchor.rs` is real and unit-tested, but
-> it has no live runtime consumer. See
-> `architecture/dns_config_runtime_matrix.md` (Phase 45 section).
-
-```toml
-[dns.trust_anchors]
-enabled = true
-anchor_file_path = "/var/lib/synvoid/dns/trusted-key.key"
-db_path = "/var/lib/synvoid/dns/trust_anchors.db"
-refresh_interval_secs = 3600
-pending_observation_days = 30
-revocation_grace_days = 30
-extended_removal_days = 60
-trust_anchor_retention_days = 7
-allow_key_rotation = true
-```
-
-### Configuration Fields
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `enabled` | `false` | Enable RFC 5011 trust anchor management |
-| `anchor_file_path` | `/var/lib/synvoid/dns/trusted-key.key` | Initial trust anchor file in RFC 5011 format (DNSKEY record format) |
-| `db_path` | `/var/lib/synvoid/dns/trust_anchors.db` | SQLite database path for persistent anchor storage |
-| `refresh_interval_secs` | `3600` | How often to refresh and process anchor state transitions |
-| `pending_observation_days` | `30` | Time a new key spends in Pending state before becoming Valid (RFC 5011 Section 3.2) |
-| `revocation_grace_days` | `30` | Time after REVOKE bit before key is Removed (RFC 5011 Section 4) |
-| `extended_removal_days` | `60` | Time after Removed before key is Purged from storage |
-| `trust_anchor_retention_days` | `7` | Time a Valid key can be absent before being marked Missing |
-| `allow_key_rotation` | `true` | Whether removed keys can be replaced (if false, removed keys are never purged) |
-
-### Complete Configuration Example
+## Configuring anchors
 
 ```toml
 [dns.recursive]
-upstream_provider = "Recursive"
+enabled = true
+upstream_provider = "recursive"     # local validation
+root_hints_path = "/var/lib/synvoid/dns/root.hints"
+trust_anchor_path = "/var/lib/synvoid/dns/trusted-key.key"
 dnssec_validation = true
+```
 
+`dns.recursive.trust_anchor_path` is the **only** supported anchor source. The
+file uses the zone-file form, one record per line:
+
+```text
+; root KSK
+. 86400 IN DNSKEY 257 3 8 AwEAAaz/tAm8yTn4Mfeh5eyI96WSVexTBAvkMgJzkKTOiW1vkIbzxeF3...R1AkUTV74bU=
+```
+
+The parenthesised multi-line form is not folded by the parser; keep the record
+on one line.
+
+Notes:
+
+- A missing or unparseable file is logged and the built-in defaults are used.
+  Check the startup log (`Loaded N static DNSSEC trust anchors from ...`) to
+  confirm which anchors are active.
+- The anchors are a **startup snapshot**. Replacing the file takes effect on the
+  next process start. There is no reload signal, no database, and no polling.
+- Rolling the root KSK is therefore a **manual operation**: update the file,
+  restart the resolver.
+
+## `[dns.trust_anchors]` is parseable but rejected
+
+The section is retained so an existing configuration file still loads, but
+activating it returns a typed `Unsupported` error naming
+`dns.recursive.trust_anchor_path` as the only source:
+
+```toml
 [dns.trust_anchors]
-enabled = true
-anchor_file_path = "/var/lib/synvoid/dns/trusted-key.key"
-db_path = "/var/lib/synvoid/dns/trust_anchors.db"
-refresh_interval_secs = 3600
-
-# RFC 5011 timing parameters (all in days)
-pending_observation_days = 30      # Time before new key becomes trusted
-revocation_grace_days = 30         # Time after REVOKE before removal
-extended_removal_days = 60        # Time before purged from storage
-trust_anchor_retention_days = 7   # Time valid key can be absent
-
-allow_key_rotation = true
+enabled = true    # rejected: RFC 5011 trust-anchor management is not implemented
 ```
 
-## How It Works
+`db_path`, `refresh_interval_secs`, `pending_observation_days`,
+`revocation_grace_days`, `extended_removal_days`,
+`trust_anchor_retention_days`, and `allow_key_rotation` describe a lifecycle
+that has no runtime consumer. They parse and are ignored.
 
-### Initial Anchor Loading
+## Relationship to validation
 
-On startup, SynVoid loads initial trust anchors from the anchor file:
+Local validation happens only in `upstream_provider = "recursive"`, where
+hickory's recursor validates every answer against the static anchors and reports
+the result honestly (`SERVFAIL` for bogus data, never a cached empty answer).
 
-1. Reads the file at `anchor_file_path`
-2. Parses DNSKEY records (expects format like `trusted-key.key` from IANA)
-3. Keys with flags=257 and protocol=3 are loaded as Valid
-4. Anchors are persisted to SQLite for subsequent runs
-
-### Key Observation Flow
-
-When SynVoid receives DNSKEY responses:
-
-1. **`observe_dnskey_at_root()`** is called for each DNSKEY
-2. If key is new → enters **Seen** state
-3. If key exists with different public key → rejected (key compromise indicator)
-4. If REVOKE bit is set → transitions to **Revoked**
-
-### Trust Anchor Check Flow
-
-When CDS/CDNSKEY records are received:
-
-1. **`trust_anchor_check()`** computes the expected DS digest
-2. Compares against the published digest
-3. If match → key transitions from **Seen** to **Pending**
-4. If key was **Missing** and reappears → goes directly to **Pending**
-
-### Background Processing
-
-The `process_rfc5011_updates()` function runs periodically to handle:
-
-- **Pending → Valid**: After `pending_observation_days` elapses and key still in DNSKEY RRset
-- **Revoked → Removed**: After `revocation_grace_days` elapses
-- **Removed → Purged**: After `extended_removal_days` elapses (if `allow_key_rotation=true`)
-- **Valid → Missing**: If not seen for `trust_anchor_retention_days`
-
-### Database Storage
-
-Anchors are stored in SQLite with the following schema:
-
-```sql
-CREATE TABLE trust_anchors (
-    key_id TEXT PRIMARY KEY,
-    key_tag INTEGER NOT NULL,
-    algorithm INTEGER NOT NULL,
-    public_key BLOB NOT NULL,
-    state TEXT NOT NULL,
-    added_at INTEGER NOT NULL,
-    last_seen INTEGER NOT NULL,
-    trust_point INTEGER NOT NULL,
-    first_seen_at INTEGER,
-    pending_since INTEGER,
-    revoked_at INTEGER,
-    removed_at INTEGER
-);
-```
-
-The `key_id` format is `{key_tag}-{algorithm}` (e.g., `20326-8`).
-
-## Debugging Trust Anchor Issues
-
-### Checking Trust Anchor Status
-
-Use the `TrustAnchorManager::get_status()` method to retrieve:
-
-```rust
-let status = manager.get_status();
-println!("Total: {}, Valid: {}, Revoked: {}, Pending: {}",
-    status.total_anchors,
-    status.valid_anchors,
-    status.revoked_anchors,
-    status.pending_anchors
-);
-```
-
-### Key Log Messages
-
-Watch for these log patterns when troubleshooting:
-
-| Pattern | Meaning |
-|---------|---------|
-| `RFC 5011: New key {key_tag} observed (Seen state)` | New key detected in DNSKEY RRset |
-| `RFC 5011: Key {key_tag} passed trust anchor check, entering Pending state` | Key validated via CDS, entering observation period |
-| `RFC 5011: Key {key_tag} promoted to Valid` | Key is now trusted for validation |
-| `RFC 5011: Key {key_tag} revoked` | REVOKE bit observed |
-| `RFC 5011: Key {key_tag} expired (not seen for N days)` | Key marked Missing |
-| `RFC 5011: Digest mismatch for key {key_tag}` | CDS digest doesn't match (possible attack) |
-| `RFC 5011: Key {key_tag} uses deprecated algorithm {algo}, rejecting` | Key uses insecure algorithm |
-
-### Common Issues and Solutions
-
-#### No Valid Trust Anchors
-
-**Symptom**: DNSSEC validation failing with "no trust anchors"
-
-**Causes**:
-- Initial anchor file not loaded
-- Database corruption
-- All keys transitioned to Revoked/Removed
-
-**Solutions**:
-1. Verify `anchor_file_path` exists and contains valid DNSKEY records
-2. Delete `db_path` and restart to reload from anchor file
-3. Check logs for anchor loading messages
-
-#### Keys Stuck in Pending
-
-**Symptom**: Key in Pending state beyond expected observation period
-
-**Cause**: Key removed from DNSKEY RRset before observation period completed
-
-**Solution**: The key will remain Pending until it either appears in DNSKEY (then becomes Valid) or is purged. This is correct RFC 5011 behavior—the key cannot be trusted if it wasn't observed continuously.
-
-#### Digest Mismatch Warnings
-
-**Symptom**: `RFC 5011: Digest mismatch for key {key_tag}`
-
-**Cause**: The DS record in the parent zone doesn't match the DNSKEY
-
-**Actions**:
-1. Verify zone is properly signed
-2. Check for key rollovers in progress
-3. If zone is being compromised, this warning indicates attack
-
-#### Deprecated Algorithm Rejection
-
-**Symptom**: `RFC 5011: Key {key_tag} uses deprecated algorithm {algo}, rejecting`
-
-**Cause**: Zone using outdated algorithms (DSA, RSASHA1, etc.)
-
-**Solution**: Zone operator should migrate to modern algorithms (RSASHA256, ECDSAP256SHA256, or ED25519)
-
-### Event Types
-
-The system produces `Rfc5011Event` notifications for state transitions:
-
-| Event | Description |
-|-------|-------------|
-| `NewKeySeen { key_tag }` | New key observed for first time |
-| `KeySeen { key_tag }` | Known key observed again |
-| `KeyPending { key_tag }` | Key validated via CDS, entering observation |
-| `KeyWaiting { key_tag, remaining_secs }` | Key still in Pending, observation incomplete |
-| `KeyPromoted { key_tag }` | Key became Valid after observation |
-| `KeyRevoked { key_tag }` | Key has REVOKE bit set |
-| `KeyRemoved { key_tag }` | Key removed from zone |
-| `KeyPurged { key_tag }` | Key removed from storage |
-| `KeyMissing { key_tag }` | Valid key not seen for retention period |
-| `KeyIgnored { key_tag, reason }` | Key rejected (deprecated algo, mismatch, etc.) |
-
-## Security Considerations
-
-### Key Compromise Detection
-
-If a key's public key changes while having the same key_tag/algorithm, it is rejected:
-
-```
-RFC 5011: Key {key_tag} public key mismatch - ignoring
-```
-
-This prevents an attacker from substituting keys during a rollover.
-
-### Public Key Change Rejection
-
-SynVoid rejects any key whose public key doesn't match previously observed value. This includes:
-- Different key material for same key-tag
-- Re-use of key-tag with new key (potential attack)
-
-### Algorithm Validation
-
-Only IETF-recommended algorithms are accepted. This prevents downgrade attacks using deprecated algorithms with known weaknesses.
-
-### Missing Key Handling
-
-When a Valid key is not seen for `trust_anchor_retention_days`:
-1. It transitions to **Missing** (not Revoked)
-2. If it reappears, it goes to **Pending** (not directly Valid)
-3. This prevents an attacker who gains access to the zone from immediately getting trust
-
-## Relationship to DNSSEC Validation
-
-RFC 5011 trust anchors are used exclusively by the **Recursive DNS provider**. Other providers (Google, Cloudflare, System, Custom) forward to upstream servers and do not perform local DNSSEC validation.
-
-To enable RFC 5011 trust anchor management:
+Forwarders (`system`, `google`, `cloudflare`, `custom`, `globalnodes`) do **not**
+validate locally. `dnssec_validation = true` with one of those is a startup
+error unless the operator accepts delegated validation:
 
 ```toml
 [dns.recursive]
-upstream_provider = "Recursive"  # Required for DNSSEC validation
-dnssec_validation = true          # Enable DNSSEC validation
-
-[dns.trust_anchors]
-enabled = true                     # Enable RFC 5011 management
+upstream_provider = "cloudflare"
+dnssec_validation = true
+allow_unvalidated_forwarding = true   # explicit: the upstream validates
 ```
 
-## Initial Trust Anchor File Format
+In that mode `/health` reports `dnssec_state.validation = "delegated"`, not
+`"enabled"`.
 
-The anchor file should contain DNSKEY records in standard zone file format:
+## See also
 
-```
-; This is a comment
-. 3600 IN DNSKEY 257 3 8 AwEAAagAI... (base64 key data)
-```
-
-- Flags must be 257 (secure entry point / KSK)
-- Protocol must be 3
-- Algorithm can be 8 (RSASHA256), 13 (ECDSAP256SHA256), 15 (ED25519), or 16 (ED448)
-- Multiple keys can be defined (for algorithm rollover)
-
-A root-zone `trusted-key.key` (IANA root KSK, sourced from
-`https://data.iana.org/root-anchors/root-anchors.xml`) is present at the
-repository root as an operator reference. It is **not** compiled into the binary
-and is not read automatically; point `anchor_file_path` at it yourself if you
-want to seed anchors.
-
-## See Also
-
-- [DNS & DNSSEC Architecture](dns-dnssec-architecture.md) - Complete DNS and DNSSEC documentation
-- [WAF Mesh](WAF_MESH.md) - Mesh networking for global node coordination
-- [Troubleshooting](TROUBLESHOOTING.md) - General debugging techniques
-- [DNS/DNSSEC Skill](../.opencode/skills/dns_dnssec/SKILL.md) - Detailed DNS architecture for developers
+- `architecture/dns.md` — resolver structure and the removed RFC 5011 types.
+- `docs/dns-dnssec-architecture.md` — signing and validation architecture.
+- RFC 5011 §2-§4 (the specification this deployment deliberately does not
+  implement), RFC 4034 §2 (DNSKEY RDATA), RFC 2308 §3 (negative TTL).

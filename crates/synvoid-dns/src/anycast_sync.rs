@@ -353,7 +353,7 @@ impl AnycastZoneSync {
             .history
             .iter()
             .find(|h| h.serial == previous_serial)
-            .map(|h| h.records.clone())
+            .map(|h| (*h.records).clone())
             .unwrap_or_default();
 
         let mut old_record_map: HashMap<(String, RecordType), Vec<DnsZoneRecord>> = HashMap::new();
@@ -585,7 +585,7 @@ impl AnycastZoneSync {
                 }
                 ZoneHistory {
                     serial: hv.serial,
-                    records: hrecords,
+                    records: Arc::new(hrecords),
                     timestamp: hv.timestamp,
                 }
             })
@@ -601,6 +601,7 @@ impl AnycastZoneSync {
             nsec3_enabled: false,
             nsec_enabled: false,
             nsec3param: None,
+            denial: std::sync::Arc::new(crate::denial::ZoneDenial::default()),
             history,
             health: ZoneHealth::default(),
         })
@@ -850,7 +851,7 @@ impl AnycastZoneSync {
         false
     }
 
-    pub fn get_local_zone(&self, zone_origin: &str) -> Option<Zone> {
+    pub fn get_local_zone(&self, zone_origin: &str) -> Option<Arc<Zone>> {
         self.local_zones.get(zone_origin)
     }
 

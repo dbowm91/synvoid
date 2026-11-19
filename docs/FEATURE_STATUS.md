@@ -10,7 +10,7 @@ These features are included in the default build profile and are production-read
 |---------|------|-------------|-----------|
 | Socket Handoff | `socket-handoff` | Graceful connection migration via FD passing | Yes |
 | Mesh Networking | `mesh` | DHT-based service discovery, transport lifecycle, Raft consensus | Yes |
-| DNS Server | `dns` | Authoritative DNS with DNSSEC, TSIG, encrypted transports; deferred config capabilities reject activation | Yes |
+| DNS Server | `dns` | Authoritative and recursive DNS with FQDN-signed DNSSEC, zone-derived NSEC/NSEC3 proofs, RFC 8945 TSIG, cookie enforcement, and encrypted transports. Transfer/update/NOTIFY activation remains a closed config gate. Serving-correctness campaign closed 2026-11-19: `architecture/dns_serving_correctness_closeout.md` | Yes |
 | Erased Pool | `erased_pool` | Type-erased HTTP/2 connection pooling | Yes |
 | Swagger UI | `swagger-ui` | API documentation UI (disable in production) | Yes |
 

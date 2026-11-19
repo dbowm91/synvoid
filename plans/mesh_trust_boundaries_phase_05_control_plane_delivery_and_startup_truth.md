@@ -1,6 +1,6 @@
 # Phase 05 Plan: Control-Plane Delivery and Startup Truth
 
-Status: **PROPOSED** (not started; findings verified at `4add005f`).
+Status: **IMPLEMENTED** (2026-11-14; delivery contract suite green in `ea638ff9`).
 
 Registered in: `plans/roadmap.md`.
 Campaign: `plans/mesh_trust_boundaries_roadmap.md`.

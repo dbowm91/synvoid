@@ -37,7 +37,7 @@ this module is a **root-crate** feature (`dns = [..., "synvoid-dns", "synvoid-dn
 | `tsig.rs` | TSIG authentication for dynamic updates and zone transfers |
 | `resolver.rs` | Recursive DNS resolver using `hickory_resolver::TokioResolver` |
 | `recursive_cache.rs` | Cache for recursive resolver responses |
-| `trust_anchor.rs` | RFC 5011 trust anchor management (public-only; stays in `synvoid-dns`) |
+| ~~`trust_anchor.rs`~~ | *Deleted* (decision T5). Anchors are a static file read by `resolver::load_static_trust_anchors`; RFC 5011 management is not implemented |
 | `hsm.rs` | Facade over `synvoid-dnssec-keystore::hsm` (PKCS#11 opt-in, fail-closed) |
 | `cookie.rs` | RFC 7873 DNS cookies - client authentication via EDNS cookie exchange |
 | `update.rs` | Dynamic DNS updates (RFC 2136) |
@@ -149,9 +149,10 @@ Production-safe transport handling with fail-fast startup, enforced limits, and 
 - Automatic key rotation via `DnssecKeystore::check_and_rotate(KeyRotationConfig)`. The keystore default is **KSK 30d / ZSK 7d** (grace period 2d, key expiration 365d); each threshold is reduced by the grace period before the age comparison. The persisted `dns.dnssec.rollover_interval_days` field defaults to 30 and feeds this config — there is no separate persisted ZSK interval field.
 - HSM support via `HsmManager` (PKCS#11 backend opt-in via `hsm`/`dns-hsm`, fail-closed, no silent fallback)
 
-**Trust Anchors** (`trust_anchor.rs`):
-- RFC 5011 automated trust anchor updates
-- States: `Seen → Pending → Valid → Revoked → Removed → Missing`
+**Trust Anchors** (`resolver::load_static_trust_anchors`):
+- One static file, read at startup (`dns.recursive.trust_anchor_path`)
+- **RFC 5011 is not implemented** (decision T5): no observation, promotion,
+  revocation, or background update task. See `docs/RFC5011_TRUST_ANCHOR.md`.
 
 **DNSSEC Limitations** (`dnssec.rs:1-13`):
 - Manual wire format construction - no built-in compression support

@@ -1,18 +1,25 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use parking_lot::RwLock;
 
-use super::Zone;
+use super::{SerialPolicy, Zone};
 
 const NUM_SHARDS: usize = 64;
 
-/// A sharded zone store that distributes zones across 64 independent RwLock<HashMap> shards.
+/// A sharded zone store that distributes zones across 64 independent
+/// RwLock<HashMap> shards.
 ///
-/// This reduces lock contention by allowing concurrent reads and writes to different zones
-/// as long as they hash to different shards. The single-lock bottleneck of a monolithic
-/// `RwLock<HashMap<String, Zone>>` is eliminated.
+/// This reduces lock contention by allowing concurrent reads and writes to
+/// different zones as long as they hash to different shards. The single-lock
+/// bottleneck of a monolithic `RwLock<HashMap<String, Zone>>` is eliminated.
+///
+/// Each zone is held as an `Arc<Zone>` (phase 09 R3): a reader clones one
+/// pointer, never the record map or the IXFR history, and a writer replaces
+/// the `Arc` on mutation (`Arc::make_mut`) so an in-flight query keeps serving
+/// the snapshot it started with.
 pub struct ShardedZoneStore {
-    shards: Vec<RwLock<HashMap<String, Zone>>>,
+    shards: Vec<RwLock<HashMap<String, Arc<Zone>>>>,
     suffix_index: RwLock<HashMap<String, String>>,
 }
 
@@ -53,6 +60,23 @@ impl ShardedZoneStore {
         self.rebuild_suffix_index();
     }
 
+    /// Re-run the zone-state writer over a mutated zone, without touching the
+    /// serial.
+    ///
+    /// This is the store's last-writer safety net (phase 09 R2): every closure
+    /// that touched `records` ends with a normalized, deduplicated zone whose
+    /// owner index and denial chains match what is served.
+    fn commit(zone: &mut Zone) {
+        let records = zone.records.clone();
+        if let Err(reason) = zone.commit_records(records, SerialPolicy::Keep) {
+            tracing::error!(
+                zone = %zone.origin,
+                reason = %reason,
+                "DNS zone store: refusing to publish an invalid record set"
+            );
+        }
+    }
+
     // ── Read operations (lock one shard) ────────────────────────────────
 
     /// Check if a zone exists (acquires read lock on one shard).
@@ -61,8 +85,11 @@ impl ShardedZoneStore {
         self.shards[idx].read().contains_key(origin)
     }
 
-    /// Get a clone of a zone (acquires read lock on one shard).
-    pub fn get(&self, origin: &str) -> Option<Zone> {
+    /// Get the served zone snapshot (acquires read lock on one shard).
+    ///
+    /// The returned `Arc` is the zone the caller should answer from; it is
+    /// stable even if the store replaces the zone concurrently.
+    pub fn get(&self, origin: &str) -> Option<Arc<Zone>> {
         let idx = Self::shard_index(origin);
         self.shards[idx].read().get(origin).cloned()
     }
@@ -116,23 +143,27 @@ impl ShardedZoneStore {
         for shard in &self.shards {
             let guard = shard.read();
             for (origin, zone) in guard.iter() {
-                f(origin, zone);
+                f(origin, zone.as_ref());
             }
         }
     }
 
     /// Call a function for each zone mutably (acquires write lock on all shards).
+    ///
+    /// **Metadata only.** A closure that changes `records` must not use this:
+    /// the owner index would go stale. Record mutations belong in
+    /// [`Self::update_zone`] or [`Zone::commit_records`], which rebuild it.
     pub fn for_each_mut<F: FnMut(&mut Zone)>(&self, mut f: F) {
         for shard in &self.shards {
             let mut guard = shard.write();
             for zone in guard.values_mut() {
-                f(zone);
+                f(Arc::make_mut(zone));
             }
         }
     }
 
     /// Find a zone by exact origin match using suffix index (O(1)).
-    pub fn find_by_exact(&self, origin: &str) -> Option<Zone> {
+    pub fn find_by_exact(&self, origin: &str) -> Option<Arc<Zone>> {
         let origin_lower = origin.trim_end_matches('.').to_lowercase();
         if let Some(origin_key) = self.suffix_index.read().get(&origin_lower) {
             return self.get(origin_key);
@@ -142,7 +173,7 @@ impl ShardedZoneStore {
 
     /// Find a zone by suffix match (qname ends with origin) using suffix index.
     /// This is O(k) where k is the number of labels in qname, not O(n) zones.
-    pub fn find_by_suffix(&self, qname: &str) -> Option<Zone> {
+    pub fn find_by_suffix(&self, qname: &str) -> Option<Arc<Zone>> {
         self.find_by_suffix_with_filter(qname, |_| true)
     }
 
@@ -152,7 +183,7 @@ impl ShardedZoneStore {
         &self,
         qname: &str,
         filter: P,
-    ) -> Option<Zone> {
+    ) -> Option<Arc<Zone>> {
         let qname_lower = qname.trim_end_matches('.').to_lowercase();
         let qname_lower = qname_lower.as_str();
 
@@ -161,7 +192,7 @@ impl ShardedZoneStore {
             let suffix = labels[i..].join(".");
             if let Some(origin_key) = self.suffix_index.read().get(&suffix) {
                 if let Some(zone) = self.get(origin_key) {
-                    if filter(&zone) {
+                    if filter(zone.as_ref()) {
                         return Some(zone);
                     }
                 }
@@ -172,12 +203,12 @@ impl ShardedZoneStore {
 
     /// Find a zone matching a predicate (acquires read lock on all shards).
     /// Note: Prefer find_by_exact or find_by_suffix for suffix matching performance.
-    pub fn find<P: Fn(&str, &Zone) -> bool>(&self, predicate: P) -> Option<Zone> {
+    pub fn find<P: Fn(&str, &Zone) -> bool>(&self, predicate: P) -> Option<Arc<Zone>> {
         for shard in &self.shards {
             let guard = shard.read();
             for (origin, zone) in guard.iter() {
-                if predicate(origin, zone) {
-                    return Some(zone.clone());
+                if predicate(origin, zone.as_ref()) {
+                    return Some(Arc::clone(zone));
                 }
             }
         }
@@ -187,15 +218,31 @@ impl ShardedZoneStore {
     // ── Write operations (lock one shard) ───────────────────────────────
 
     /// Insert a zone (acquires write lock on one shard).
-    pub fn insert(&self, origin: String, zone: Zone) {
+    ///
+    /// The store is the last writer, so the installed zone goes through the
+    /// single zone-state writer ([`Zone::commit_records`]): owner names are
+    /// normalized, records deduplicated, and the canonical owner index and
+    /// denial chains rebuilt. Tests, mesh apply and store reload insert a zone
+    /// directly; no insert can publish a stale chain.
+    pub fn insert(&self, origin: String, mut zone: Zone) {
+        let records = zone.records.clone();
+        if let Err(reason) = zone.commit_records(records, SerialPolicy::Keep) {
+            tracing::error!(
+                zone = %origin,
+                reason = %reason,
+                "DNS zone store: inserting an invalid record set unchanged"
+            );
+        }
         let idx = Self::shard_index(&origin);
-        self.shards[idx].write().insert(origin.clone(), zone);
+        self.shards[idx]
+            .write()
+            .insert(origin.clone(), Arc::new(zone));
         let origin_lower = origin.trim_end_matches('.').to_lowercase();
         self.suffix_index.write().insert(origin_lower, origin);
     }
 
     /// Remove a zone (acquires write lock on one shard).
-    pub fn remove(&self, origin: &str) -> Option<Zone> {
+    pub fn remove(&self, origin: &str) -> Option<Arc<Zone>> {
         let idx = Self::shard_index(origin);
         let result = self.shards[idx].write().remove(origin);
         if result.is_some() {
@@ -206,11 +253,19 @@ impl ShardedZoneStore {
     }
 
     /// Update a zone with a closure (acquires write lock on one shard).
+    ///
     /// The closure receives a mutable reference to the zone if it exists.
+    /// Afterwards the zone is re-committed with [`SerialPolicy::Keep`], so a
+    /// closure that changes `records` cannot leave a stale owner index behind;
+    /// a caller that needs a serial bump calls
+    /// [`Zone::commit_records`] with [`SerialPolicy::Bump`] inside the closure
+    /// (the trailing commit is then idempotent).
     pub fn update_zone<F: FnOnce(&mut Zone)>(&self, origin: &str, f: F) {
         let idx = Self::shard_index(origin);
         if let Some(zone) = self.shards[idx].write().get_mut(origin) {
+            let zone = Arc::make_mut(zone);
             f(zone);
+            Self::commit(zone);
         }
     }
 
@@ -220,8 +275,10 @@ impl ShardedZoneStore {
         let mut binding = self.shards[idx].write();
         let zone = binding
             .entry(origin.to_string())
-            .or_insert_with(|| Zone::new(origin.to_string()));
+            .or_insert_with(|| Arc::new(Zone::new(origin.to_string())));
+        let zone = Arc::make_mut(zone);
         f(zone);
+        Self::commit(zone);
     }
 }
 

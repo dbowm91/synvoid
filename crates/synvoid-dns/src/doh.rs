@@ -235,27 +235,50 @@ impl DohServer {
         counter!("synvoid.doh.queries.total").increment(1);
 
         let query_start = std::time::Instant::now();
-        let response = {
-            let dns_server_guard = dns_server.read();
-            let Some(server) = dns_server_guard.as_ref() else {
-                tracing::warn!("DoH request received but DNS server not configured");
-                return Ok(hyper::Response::builder()
-                    .status(StatusCode::SERVICE_UNAVAILABLE)
-                    .body(Full::new(Bytes::new()))
-                    .expect("response builder should not fail"));
-            };
 
-            let ctx = server.query_context();
-            if let Some(c) = &ctx.cache {
-                DnsServer::handle_query_with_cache(
-                    &ctx,
-                    &dns_query,
-                    c,
-                    crate::cache::TransportClass::Http,
-                    Some(client_ip),
-                )
-            } else {
-                DnsServer::handle_query(&ctx, &dns_query, Some(client_ip))
+        // Clone the server handle so the read lock is not held across the
+        // await (a `parking_lot` guard is not `Send`).
+        let server = {
+            let dns_server_guard = dns_server.read();
+            dns_server_guard.as_ref().cloned()
+        };
+        let Some(server) = server else {
+            tracing::warn!("DoH request received but DNS server not configured");
+            return Ok(hyper::Response::builder()
+                .status(StatusCode::SERVICE_UNAVAILABLE)
+                .body(Full::new(Bytes::new()))
+                .expect("response builder should not fail"));
+        };
+        let ctx = server.query_context();
+
+        // Admission mapping for DoH (RFC 8484 §4.2.1):
+        //
+        // - `Allow`  → the DNS response, carried as HTTP 200.
+        // - `Reply`  → the same: a DNS-level error is still a valid DoH
+        //              response body, so it is HTTP 200, not an HTTP error.
+        // - `Drop`   → there is no DNS response to send (a `QR=1` packet or a
+        //              header too short to echo), so the HTTP layer carries
+        //              the refusal: 400 Bad Request.
+        let response = match crate::server::admit(
+            &dns_query,
+            client_ip,
+            crate::server::TransportKind::Https,
+            &ctx,
+        ) {
+            crate::server::Admission::Allow(admitted) => {
+                DnsServer::serve_admitted(&ctx, &admitted, &dns_query, Some(client_ip)).await
+            }
+            crate::server::Admission::Reply(bytes) => Some(std::sync::Arc::new(bytes)),
+            crate::server::Admission::Drop => {
+                counter!("synvoid.doh.query.errors").increment(1);
+                tracing::debug!(
+                    client_ip = %client_ip,
+                    "DoH request dropped by admission; no DNS response exists"
+                );
+                return Ok(hyper::Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(Full::new(Bytes::from("DNS message dropped")))
+                    .expect("response builder should not fail"));
             }
         };
 

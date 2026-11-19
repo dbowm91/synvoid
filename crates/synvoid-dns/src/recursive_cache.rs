@@ -72,22 +72,25 @@ pub enum DnssecValidationState {
     Unchecked,
 }
 
+/// The one cache key for a recursive answer.
+///
+/// `qname` is lowercased: DNS names are case-insensitive (RFC 4343), so
+/// `WWW.Example.COM` and `www.example.com` must share an entry instead of
+/// fragmenting the cache. `cd` is part of the key because a CD=1 query may
+/// store data a validating query must not read. `client_subnet` is `Some` only
+/// when a client subnet is actually forwarded upstream.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RecursiveCacheKey {
     pub qname: Vec<u8>,
     pub qtype: RecursiveRecordType,
     pub client_subnet: Option<IpAddr>,
     pub dnssec_ok: bool,
+    pub cd: bool,
 }
 
 impl RecursiveCacheKey {
     pub fn new(qname: &[u8], qtype: u16, client_subnet: Option<IpAddr>) -> Self {
-        Self {
-            qname: qname.to_vec(),
-            qtype: RecursiveRecordType::from(qtype),
-            client_subnet,
-            dnssec_ok: false,
-        }
+        Self::new_with_dnssec(qname, qtype, client_subnet, false)
     }
 
     pub fn new_with_dnssec(
@@ -96,11 +99,23 @@ impl RecursiveCacheKey {
         client_subnet: Option<IpAddr>,
         dnssec_ok: bool,
     ) -> Self {
+        Self::with_flags(qname, qtype, client_subnet, dnssec_ok, false)
+    }
+
+    /// Build the canonical key for one recursive query.
+    pub fn with_flags(
+        qname: &[u8],
+        qtype: u16,
+        client_subnet: Option<IpAddr>,
+        dnssec_ok: bool,
+        cd: bool,
+    ) -> Self {
         Self {
-            qname: qname.to_vec(),
+            qname: qname.to_ascii_lowercase(),
             qtype: RecursiveRecordType::from(qtype),
             client_subnet,
             dnssec_ok,
+            cd,
         }
     }
 }
@@ -129,6 +144,32 @@ pub struct NegativeCacheEntry {
     pub cached_at: Instant,
     pub is_nxdomain: bool,
     pub validation_state: DnssecValidationState,
+}
+
+/// What a cache read produced.
+///
+/// `Stale` is not a hit: RFC 8767 §4 allows a stale answer only as a fallback
+/// after an upstream failure, so the caller must try the upstream first.
+#[derive(Debug, Clone)]
+pub enum CacheLookup {
+    /// Usable now; record TTLs are already decremented by the entry's age.
+    Fresh(CacheHit),
+    /// Expired but still inside the stale window. Usable only if the upstream
+    /// lookup that follows fails.
+    Stale(CacheHit),
+    /// Absent, or expired beyond the stale window.
+    Miss,
+}
+
+/// One cached answer, ready to be written into a response.
+#[derive(Debug, Clone)]
+pub struct CacheHit {
+    pub records: Vec<CachedRecord>,
+    /// NOERROR (0) or NXDOMAIN (3).
+    pub rcode: u8,
+    pub validation_state: DnssecValidationState,
+    /// Age of the entry; the stale window is measured from expiry, not origin.
+    pub age: Duration,
 }
 
 #[derive(Debug, Clone)]
@@ -226,6 +267,77 @@ impl RecursiveDnsCache {
         }
     }
 
+    /// Read one cache entry with the freshness the response policy needs.
+    pub fn lookup(&self, key: &RecursiveCacheKey) -> CacheLookup {
+        let inner = &self.inner;
+        let now = Instant::now();
+
+        if let Some(entry) = inner.positive_cache.get(key) {
+            let age = now.duration_since(entry.cached_at);
+
+            if age < entry.ttl {
+                inner.stats.write().hits += 1;
+                inner.stats.write().positive_hits += 1;
+                return CacheLookup::Fresh(CacheHit {
+                    records: age_records(&entry.records, entry.ttl, age),
+                    rcode: crate::wire::RCODE_NOERROR,
+                    validation_state: entry.validation_state,
+                    age,
+                });
+            }
+
+            if age < entry.ttl + inner.config.stale_ttl {
+                inner.stats.write().hits += 1;
+                inner.stats.write().stale_hits += 1;
+                return CacheLookup::Stale(CacheHit {
+                    records: age_records(&entry.records, entry.ttl, age),
+                    rcode: crate::wire::RCODE_NOERROR,
+                    validation_state: entry.validation_state,
+                    age,
+                });
+            }
+        }
+
+        if let Some(nx_entry) = inner.negative_cache.get(key) {
+            let age = now.duration_since(nx_entry.cached_at);
+            let rcode = if nx_entry.is_nxdomain {
+                crate::wire::RCODE_NXDOMAIN
+            } else {
+                crate::wire::RCODE_NOERROR
+            };
+
+            if age < nx_entry.ncache_ttl {
+                inner.stats.write().hits += 1;
+                inner.stats.write().negative_hits += 1;
+                return CacheLookup::Fresh(CacheHit {
+                    records: Vec::new(),
+                    rcode,
+                    validation_state: nx_entry.validation_state,
+                    age,
+                });
+            }
+
+            if age < nx_entry.ncache_ttl + inner.config.stale_ttl {
+                inner.stats.write().hits += 1;
+                inner.stats.write().stale_hits += 1;
+                return CacheLookup::Stale(CacheHit {
+                    records: Vec::new(),
+                    rcode,
+                    validation_state: nx_entry.validation_state,
+                    age,
+                });
+            }
+        }
+
+        inner.stats.write().misses += 1;
+        CacheLookup::Miss
+    }
+
+    /// Read one entry in the pre-policy shape.
+    ///
+    /// Kept for the cache's own tests and for callers that only need "is there
+    /// something": `bool` is the stale flag and record TTLs are the original
+    /// ones. Response building uses [`RecursiveDnsCache::lookup`].
     pub fn get(
         &self,
         key: &RecursiveCacheKey,
@@ -236,7 +348,6 @@ impl RecursiveDnsCache {
         if let Some(entry) = inner.positive_cache.get(key) {
             let age = now.duration_since(entry.cached_at);
             let is_stale = age >= entry.ttl && age < entry.ttl + inner.config.stale_ttl;
-            let validation_state = entry.validation_state;
 
             if age < entry.ttl || is_stale {
                 inner.stats.write().hits += 1;
@@ -245,7 +356,7 @@ impl RecursiveDnsCache {
                 } else {
                     inner.stats.write().positive_hits += 1;
                 }
-                return Some((entry.records.clone(), is_stale, validation_state));
+                return Some((entry.records.clone(), is_stale, entry.validation_state));
             }
         }
 
@@ -269,6 +380,11 @@ impl RecursiveDnsCache {
         None
     }
 
+    /// Insert a positive answer.
+    ///
+    /// A TTL of 0 is not cacheable (RFC 2181 §8: the answer must not be
+    /// reused), and `min_ttl` must not resurrect it — that is how a TTL-0
+    /// answer used to be served for the whole stale window.
     pub fn insert_positive(
         &self,
         key: RecursiveCacheKey,
@@ -276,6 +392,10 @@ impl RecursiveDnsCache {
         original_ttl: u32,
         validation_state: DnssecValidationState,
     ) {
+        if original_ttl == 0 || records.is_empty() {
+            return;
+        }
+
         let inner = &self.inner;
         let ttl = Duration::from_secs(
             original_ttl
@@ -294,6 +414,11 @@ impl RecursiveDnsCache {
         inner.stats.write().insertions += 1;
     }
 
+    /// Insert a negative answer (NXDOMAIN or NODATA).
+    ///
+    /// `ncache_ttl` is the SOA-derived TTL of RFC 2308 §3; the configured
+    /// negative TTL is the upper bound, not a replacement. A zero TTL means the
+    /// upstream allowed no negative caching.
     pub fn insert_negative(
         &self,
         key: RecursiveCacheKey,
@@ -301,6 +426,10 @@ impl RecursiveDnsCache {
         ncache_ttl: u32,
         validation_state: DnssecValidationState,
     ) {
+        if ncache_ttl == 0 {
+            return;
+        }
+
         let inner = &self.inner;
         let ttl =
             Duration::from_secs(ncache_ttl.min(inner.config.negative_ttl.as_secs() as u32) as u64);
@@ -381,6 +510,22 @@ impl RecursiveDnsCache {
     pub fn negative_len(&self) -> usize {
         self.inner.negative_cache.iter().count()
     }
+}
+
+/// Apply the entry's age to each record TTL, so a served TTL is the remaining
+/// lifetime rather than the value the upstream sent when the entry was stored.
+fn age_records(records: &[CachedRecord], entry_ttl: Duration, age: Duration) -> Vec<CachedRecord> {
+    let elapsed = u32::try_from(age.as_secs()).unwrap_or(u32::MAX);
+    let entry_cap = u32::try_from(entry_ttl.as_secs()).unwrap_or(u32::MAX);
+    records
+        .iter()
+        .map(|record| CachedRecord {
+            name: record.name.clone(),
+            record_type: record.record_type,
+            ttl: record.ttl.min(entry_cap).saturating_sub(elapsed),
+            data: record.data.clone(),
+        })
+        .collect()
 }
 
 #[cfg(test)]

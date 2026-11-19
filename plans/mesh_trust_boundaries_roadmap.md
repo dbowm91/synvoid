@@ -1,6 +1,6 @@
 # Mesh Trust Boundaries and Delivery Integrity Roadmap
 
-Status: **PROPOSED** (audit complete; no implementation started).
+Status: **IN PROGRESS** (audit complete 2026-11-14; phases 01, 02, 03, 04a, 05, 06a, 06b implemented and verified in `ea638ff9`; 04b, 04c, 06c, 07 remain).
 Research baseline: `4add005f` (merged `main`), audited 2026-11-14.
 
 Predecessor context:

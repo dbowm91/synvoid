@@ -1,11 +1,18 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueryParseError {
     TooShort,
-    NotAQuery { is_response: bool, opcode: u8 },
+    NotAQuery {
+        is_response: bool,
+        opcode: u8,
+    },
     BadQuestionCount(u16),
     LabelTooLong,
     TotalNameTooLong,
     TruncatedQuestion,
+    /// A label contains a literal dot. The internal question name is a dotted
+    /// presentation string, so such a label is indistinguishable from a label
+    /// boundary and could answer a different name. Fail closed instead.
+    AmbiguousLabel,
     MalformedEdns,
 }
 
@@ -25,6 +32,7 @@ impl std::fmt::Display for QueryParseError {
             Self::LabelTooLong => write!(f, "label exceeds 63 bytes"),
             Self::TotalNameTooLong => write!(f, "QNAME exceeds 255 bytes"),
             Self::TruncatedQuestion => write!(f, "question section truncated"),
+            Self::AmbiguousLabel => write!(f, "query name contains a label with a literal dot"),
             Self::MalformedEdns => write!(f, "malformed EDNS OPT record"),
         }
     }
@@ -89,6 +97,97 @@ impl QueryFlags {
     }
 }
 
+/// Walk every record the message header declares and report whether all of
+/// them fit inside `query`.
+///
+/// The counts, not the trailing bytes, decide how many records a message
+/// claims (RFC 1035 §4.1.1). A record whose owner name, fixed header, or
+/// RDLENGTH-delimited RDATA does not fit is a malformed message: the
+/// additional section cannot be located, so no EDNS/TSIG parse may guess at
+/// it. Trailing bytes beyond the last declared record are ignored here; the
+/// header's counts are authoritative.
+///
+/// Questions are walked with the same name skipper as resource records
+/// because this is a framing check, not a semantic one: the canonical parse
+/// rejects a compressed question separately.
+pub fn declared_records_well_formed(query: &[u8]) -> bool {
+    if query.len() < 12 {
+        return false;
+    }
+
+    let qdcount = u16::from_be_bytes([query[4], query[5]]) as usize;
+    let ancount = u16::from_be_bytes([query[6], query[7]]) as usize;
+    let nscount = u16::from_be_bytes([query[8], query[9]]) as usize;
+    let arcount = u16::from_be_bytes([query[10], query[11]]) as usize;
+
+    let mut pos = 12;
+    for _ in 0..qdcount {
+        let Some(next) = skip_framed_name(query, pos) else {
+            return false;
+        };
+        // QTYPE(2) + QCLASS(2).
+        let Some(next) = next.checked_add(4) else {
+            return false;
+        };
+        if next > query.len() {
+            return false;
+        }
+        pos = next;
+    }
+
+    for _ in 0..ancount.saturating_add(nscount).saturating_add(arcount) {
+        let Some(name_end) = skip_framed_name(query, pos) else {
+            return false;
+        };
+        // TYPE(2) + CLASS(2) + TTL(4) + RDLENGTH(2).
+        let Some(rdata_start) = name_end.checked_add(10) else {
+            return false;
+        };
+        if rdata_start > query.len() {
+            return false;
+        }
+        let rdlen = u16::from_be_bytes([query[name_end + 8], query[name_end + 9]]) as usize;
+        let Some(next) = rdata_start.checked_add(rdlen) else {
+            return false;
+        };
+        if next > query.len() {
+            return false;
+        }
+        pos = next;
+    }
+
+    true
+}
+
+/// Skip one wire-format name for framing purposes.
+///
+/// A compression pointer terminates the name without being followed: this
+/// checks record boundaries, and following a pointer is the semantic parser's
+/// job. Every read is bounds-checked.
+fn skip_framed_name(buf: &[u8], start: usize) -> Option<usize> {
+    let mut pos = start;
+    loop {
+        let len = *buf.get(pos)? as usize;
+        if len == 0 {
+            return Some(pos + 1);
+        }
+        if (len & 0xC0) == 0xC0 {
+            let end = pos.checked_add(2)?;
+            if end > buf.len() {
+                return None;
+            }
+            return Some(end);
+        }
+        if len > 63 {
+            return None;
+        }
+        pos = pos.checked_add(1 + len)?;
+        if pos > buf.len() {
+            return None;
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedDnsQuery<'a> {
     pub id: u16,
@@ -101,6 +200,16 @@ pub struct ParsedDnsQuery<'a> {
     pub question_end: usize,
     pub has_edns: bool,
     pub dnssec_ok: bool,
+    /// The OPT record parsed from the additional section, when present.
+    ///
+    /// This is the single EDNS parse for the whole request path: the handler,
+    /// the transport-class derivation, and the firewall all read it here
+    /// instead of guessing field offsets from `question_end`.
+    pub edns: Option<crate::edns::EdnsOptions>,
+    /// A second OPT record was present, which RFC 6891 §6.1.1 makes a FORMERR.
+    pub duplicate_opt: bool,
+    /// An OPT option body violated the framing it declared (FORMERR).
+    pub malformed_edns: bool,
     pub raw: &'a [u8],
 }
 
@@ -162,6 +271,13 @@ impl<'a> ParsedDnsQuery<'a> {
                     return Err(QueryParseError::LabelTooLong);
                 }
             }
+            // A label containing a dot cannot be represented in the dotted
+            // presentation name the lookup uses; accepting it would conflate
+            // `a.b` (one label) with `a.b` (two labels) and could answer a
+            // name the client did not ask for.
+            if label_bytes.contains(&b'.') {
+                return Err(QueryParseError::AmbiguousLabel);
+            }
 
             // Validate UTF-8
             let label_str =
@@ -190,31 +306,29 @@ impl<'a> ParsedDnsQuery<'a> {
         let qclass = u16::from_be_bytes([query[qname_end + 2], query[qname_end + 3]]);
         let question_end = qname_end + 4;
 
-        // Detect EDNS by checking if ARCOUNT > 0 and the first additional record is OPT (type 41)
+        // EDNS state is parsed exactly once, from the additional section the
+        // header's ARCOUNT describes. A zero ARCOUNT means the packet has no
+        // EDNS state even when OPT-shaped bytes follow the question. The
+        // additional section starts after the answer and authority sections,
+        // which are empty for a standard query but not for UPDATE.
         let arcount = u16::from_be_bytes([query[10], query[11]]);
-        let mut has_edns = false;
-        let mut dnssec_ok = false;
-
-        if arcount > 0 {
-            // OPT record in EDNS: root(1) + type(2) + class/UDP_size(2) + rdata(4+)
-            // Type field is at question_end + 1 (after root label byte)
-            if question_end + 3 < query.len() {
-                let rr_type =
-                    u16::from_be_bytes([query[question_end + 1], query[question_end + 2]]);
-                if rr_type == 41 {
-                    has_edns = true;
-                    // OPT RDATA layout (after root label):
-                    //   type(2) + class/UDP_size(2) + ext_rcode(1) + version(1) + flags(2)
-                    // Flags start at question_end + 1 + 2 + 2 + 1 + 1 = question_end + 7
-                    let flags_offset = question_end + 7;
-                    if flags_offset + 2 <= query.len() {
-                        let edns_flags =
-                            u16::from_be_bytes([query[flags_offset], query[flags_offset + 1]]);
-                        dnssec_ok = (edns_flags & 0x8000) != 0;
-                    }
-                }
-            }
-        }
+        let ancount = u16::from_be_bytes([query[6], query[7]]);
+        let nscount = u16::from_be_bytes([query[8], query[9]]);
+        let edns_state = if qdcount == 1 && arcount > 0 {
+            crate::edns::additional_section_start(query, question_end, ancount, nscount)
+                .map(|additional_start| {
+                    crate::edns::parse_query_edns(query, additional_start, arcount)
+                })
+                .unwrap_or_default()
+        } else {
+            crate::edns::QueryEdns::default()
+        };
+        let has_edns = edns_state.options.is_some();
+        let dnssec_ok = edns_state
+            .options
+            .as_ref()
+            .is_some_and(|edns| edns.dnssec_ok);
+        let malformed_edns = edns_state.is_malformed();
 
         Ok(Self {
             id,
@@ -227,6 +341,9 @@ impl<'a> ParsedDnsQuery<'a> {
             question_end,
             has_edns,
             dnssec_ok,
+            duplicate_opt: edns_state.has_duplicate_opt(),
+            malformed_edns,
+            edns: edns_state.options,
             raw: query,
         })
     }
@@ -900,5 +1017,32 @@ mod tests {
         let flags = build_response_flags_with_policy(policy, false, true, 3);
         assert_eq!(flags & 0x000F, 3); // NXDOMAIN
         assert_eq!(flags & 0x0080, 0); // RA must be 0
+    }
+
+    #[test]
+    fn label_containing_a_dot_is_rejected() {
+        // `a.b` as a *single* wire label is a legal DNS label but is not
+        // representable in the dotted internal name: it would be looked up as
+        // the two-label name `a.b`. Fail closed instead of answering the wrong
+        // name (audit L6).
+        let mut query = vec![
+            0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        query.extend_from_slice(&[0x03, b'a', b'.', b'b', 0x00]);
+        query.extend_from_slice(&[0x00, 0x01, 0x00, 0x01]);
+
+        assert!(matches!(
+            ParsedDnsQuery::parse(&query),
+            Err(QueryParseError::AmbiguousLabel)
+        ));
+
+        // The same two labels written as separate labels parse normally.
+        let mut unambiguous = vec![
+            0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        unambiguous.extend_from_slice(&[0x01, b'a', 0x01, b'b', 0x00]);
+        unambiguous.extend_from_slice(&[0x00, 0x01, 0x00, 0x01]);
+        let parsed = ParsedDnsQuery::parse(&unambiguous).expect("two labels parse");
+        assert_eq!(parsed.qname, "a.b");
     }
 }

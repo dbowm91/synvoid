@@ -4,7 +4,9 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 use synvoid_dns::cache::{CacheKey, DnsCache};
+use synvoid_dns::runtime_config::{TsigAlgorithmRuntime, TsigRuntimeKey};
 use synvoid_dns::server::{DnsZoneRecord, RecordType, ShardedZoneStore};
+use synvoid_dns::tsig::TsigVerifier;
 use synvoid_dns::update::DynamicUpdateHandler;
 use synvoid_dns::wire;
 
@@ -13,22 +15,40 @@ use support::query::{
 };
 use support::zone::zone_with_soa;
 
-fn build_rr_delete(name: &str, rtype: u16) -> Vec<u8> {
+const CLASS_ANY: u16 = 255;
+const CLASS_NONE: u16 = 254;
+
+fn test_verifier() -> Arc<TsigVerifier> {
+    Arc::new(
+        TsigVerifier::new(vec![TsigRuntimeKey {
+            name: "update-key".to_string(),
+            secret: b"update-key-secret-material-0123456789".to_vec(),
+            algorithm: TsigAlgorithmRuntime::HmacSha256,
+        }])
+        .expect("test TSIG key"),
+    )
+}
+
+fn handler(zones: Arc<ShardedZoneStore>) -> DynamicUpdateHandler {
+    DynamicUpdateHandler::new(zones)
+        .with_config(true, true, false)
+        .expect("no TSIG required")
+}
+
+/// An RR carrying a class, TTL, and RDATA (for prerequisites and deletes).
+fn build_typed_rr(name: &str, rtype: u16, class: u16, ttl: u32, rdata: &[u8]) -> Vec<u8> {
     let mut buf = encode_qname(name);
     buf.extend_from_slice(&rtype.to_be_bytes());
-    buf.extend_from_slice(&2u16.to_be_bytes());
-    buf.extend_from_slice(&0u32.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
+    buf.extend_from_slice(&class.to_be_bytes());
+    buf.extend_from_slice(&ttl.to_be_bytes());
+    buf.extend_from_slice(&(rdata.len() as u16).to_be_bytes());
+    buf.extend_from_slice(rdata);
     buf
 }
 
-fn build_prerequisite_rr(name: &str, rtype: u16, condition_class: u16) -> Vec<u8> {
-    let mut buf = encode_qname(name);
-    buf.extend_from_slice(&rtype.to_be_bytes());
-    buf.extend_from_slice(&condition_class.to_be_bytes());
-    buf.extend_from_slice(&0u32.to_be_bytes());
-    buf.extend_from_slice(&0u16.to_be_bytes());
-    buf
+/// Delete an entire RRset: class ANY, TTL 0, empty RDATA (RFC 2136 §3.4.2.3).
+fn build_rr_delete(name: &str, rtype: u16) -> Vec<u8> {
+    build_typed_rr(name, rtype, CLASS_ANY, 0, &[])
 }
 
 fn build_update_delete_record(zone: &str, name: &str, rtype: u16) -> Vec<u8> {
@@ -46,26 +66,32 @@ fn build_update_with_prerequisite(
 ) -> Vec<u8> {
     let mut buf = build_update_header(1, 1, 0, 0);
     buf.extend_from_slice(&build_zone_question(zone));
-    buf.extend_from_slice(&build_prerequisite_rr(
+    buf.extend_from_slice(&build_typed_rr(
         prereq_name,
         prereq_type,
         condition_class,
+        0,
+        &[],
     ));
     buf
 }
 
-fn build_update_remove_final_soa(zone: &str) -> Vec<u8> {
-    let mut buf = build_update_header(1, 0, 0, 1);
-    buf.extend_from_slice(&build_zone_question(zone));
-    buf.extend_from_slice(&build_rr_delete("@", 6));
-    buf
+/// Wire-format SOA RDATA: two names plus the five 32-bit fields.
+fn soa_rdata(zone: &str, serial: u32) -> Vec<u8> {
+    let mut rdata = encode_qname(&format!("ns1.{zone}"));
+    rdata.extend_from_slice(&encode_qname(&format!("admin.{zone}")));
+    rdata.extend_from_slice(&serial.to_be_bytes());
+    rdata.extend_from_slice(&3600u32.to_be_bytes());
+    rdata.extend_from_slice(&600u32.to_be_bytes());
+    rdata.extend_from_slice(&604800u32.to_be_bytes());
+    rdata.extend_from_slice(&300u32.to_be_bytes());
+    rdata
 }
 
-fn build_update_duplicate_soa_add(zone: &str) -> Vec<u8> {
-    let soa_rdata = format!("ns1.{}. admin.{}. 999 3600 600 604800 300", zone, zone);
+fn build_update_duplicate_soa_add(zone: &str, serial: u32) -> Vec<u8> {
     let mut buf = build_update_header(1, 0, 0, 1);
     buf.extend_from_slice(&build_zone_question(zone));
-    buf.extend_from_slice(&build_rr("@", 6, soa_rdata.as_bytes(), 300));
+    buf.extend_from_slice(&build_rr("@", 6, &soa_rdata(zone, serial), 300));
     buf
 }
 
@@ -73,7 +99,12 @@ fn build_update_invalid_cname_coexistence(zone: &str) -> Vec<u8> {
     let mut buf = build_update_header(1, 0, 0, 2);
     buf.extend_from_slice(&build_zone_question(zone));
     buf.extend_from_slice(&build_rr("www", 1, &[1, 2, 3, 4], 300));
-    buf.extend_from_slice(&build_rr("www", 5, b"target.example.test.", 300));
+    buf.extend_from_slice(&build_rr(
+        "www",
+        5,
+        &encode_qname("target.example.test"),
+        300,
+    ));
     buf
 }
 
@@ -82,7 +113,7 @@ fn update_authorized_add_a_record_succeeds() {
     let zones = Arc::new(ShardedZoneStore::new());
     zones.insert("example.test".to_string(), zone_with_soa("example.test", 1));
 
-    let handler = DynamicUpdateHandler::new(zones.clone()).with_config(true, true, false);
+    let handler = handler(zones.clone());
     let client: IpAddr = "10.0.0.1".parse().unwrap();
     let query = build_update_add_record("example.test", "new.example.test", 1, &[1, 2, 3, 4], 300);
 
@@ -101,12 +132,15 @@ fn update_authorized_add_a_record_succeeds() {
     );
 
     let z = zones.get("example.test").unwrap();
-    let key = ("new.example.test".to_string(), RecordType::A);
+    // The store keys records by the origin-relative owner name the query
+    // path looks up (D22): "new.example.test" becomes "new".
+    let key = ("new".to_string(), RecordType::A);
     assert!(
         z.records.contains_key(&key),
-        "zone must contain the new A record"
+        "zone must contain the new A record under its relative owner"
     );
     assert_eq!(z.records.get(&key).unwrap().len(), 1);
+    assert_eq!(z.records.get(&key).unwrap()[0].value, "1.2.3.4");
 }
 
 #[test]
@@ -114,9 +148,9 @@ fn update_authorized_delete_a_record_succeeds() {
     let zones = Arc::new(ShardedZoneStore::new());
     let mut zone = zone_with_soa("example.test", 1);
     zone.records.insert(
-        ("del.example.test".to_string(), RecordType::A),
+        ("del".to_string(), RecordType::A),
         vec![DnsZoneRecord {
-            name: "del.example.test".to_string(),
+            name: "del".to_string(),
             record_type: RecordType::A,
             value: "10.0.0.2".to_string(),
             ttl: 300,
@@ -125,7 +159,7 @@ fn update_authorized_delete_a_record_succeeds() {
     );
     zones.insert("example.test".to_string(), zone);
 
-    let handler = DynamicUpdateHandler::new(zones.clone()).with_config(true, true, false);
+    let handler = handler(zones.clone());
     let client: IpAddr = "10.0.0.1".parse().unwrap();
     let query = build_update_delete_record("example.test", "del.example.test", 1);
 
@@ -140,48 +174,73 @@ fn update_authorized_delete_a_record_succeeds() {
     assert_eq!(rcode, wire::UPDATE_RCODE_NOERROR);
 
     let z = zones.get("example.test").unwrap();
-    let key = ("del.example.test".to_string(), RecordType::A);
+    let key = ("del".to_string(), RecordType::A);
     assert!(
         !z.records.contains_key(&key),
         "zone must no longer contain the deleted A record"
     );
 }
 
+/// ANY + ANY + TTL 0 + RDLENGTH 0 on a name that does not exist is NXDOMAIN.
 #[test]
-fn update_prerequisite_nxrrset_leaves_zone_unchanged() {
+fn update_prerequisite_name_not_in_use_failure_returns_nxdomain() {
     let zones = Arc::new(ShardedZoneStore::new());
     zones.insert("example.test".to_string(), zone_with_soa("example.test", 1));
 
-    let handler = DynamicUpdateHandler::new(zones.clone()).with_config(true, true, false);
+    let handler = handler(zones.clone());
     let client: IpAddr = "10.0.0.1".parse().unwrap();
-    let query = build_update_with_prerequisite("example.test", "@", 6, 4);
+    // "Name is in use" for a name that is not in use.
+    let query =
+        build_update_with_prerequisite("example.test", "missing.example.test", 255, CLASS_ANY);
 
     let result = handler.handle_update(&query, client);
     assert!(
         result.is_ok(),
-        "prerequisite check returns Ok, not Err: {:?}",
-        result.err()
+        "prerequisite failure is a response, not an Err"
     );
     let response = result.unwrap();
     let rcode = response[3] & 0x0F;
-    assert!(
-        rcode == wire::UPDATE_RCODE_YXDOMAIN || rcode == wire::UPDATE_RCODE_NXRRSET,
-        "prerequisite failure must return YXDOMAIN (6) or NXRRSET (8), got {}",
-        rcode
+    assert_eq!(
+        rcode,
+        wire::UPDATE_RCODE_NXDOMAIN,
+        "name-in-use prerequisite on a missing name must be NXDOMAIN"
     );
 
     let z = zones.get("example.test").unwrap();
     assert_eq!(z.serial, 1, "zone serial must remain unchanged");
 }
 
+/// ANY + type + TTL 0 + RDLENGTH 0 on a missing RRset is NXRRSET.
 #[test]
-fn update_prerequisite_yxrrset_leaves_zone_unchanged() {
+fn update_prerequisite_rrset_missing_returns_nxrrset() {
+    let zones = Arc::new(ShardedZoneStore::new());
+    zones.insert("example.test".to_string(), zone_with_soa("example.test", 1));
+
+    let handler = handler(zones.clone());
+    let client: IpAddr = "10.0.0.1".parse().unwrap();
+    // "RRset exists (value independent)" for an A RRset that does not exist.
+    let query = build_update_with_prerequisite("example.test", "www.example.test", 1, CLASS_ANY);
+
+    let response = handler.handle_update(&query, client).unwrap();
+    assert_eq!(
+        response[3] & 0x0F,
+        wire::UPDATE_RCODE_NXRRSET,
+        "missing RRset prerequisite must be NXRRSET"
+    );
+
+    let z = zones.get("example.test").unwrap();
+    assert_eq!(z.serial, 1, "zone serial must remain unchanged");
+}
+
+/// ANY + type + TTL 0 + RDLENGTH 0 on an existing RRset holds → NOERROR.
+#[test]
+fn update_prerequisite_rrset_exists_succeeds() {
     let zones = Arc::new(ShardedZoneStore::new());
     let mut zone = zone_with_soa("example.test", 1);
     zone.records.insert(
-        ("exists.example.test".to_string(), RecordType::A),
+        ("exists".to_string(), RecordType::A),
         vec![DnsZoneRecord {
-            name: "exists.example.test".to_string(),
+            name: "exists".to_string(),
             record_type: RecordType::A,
             value: "10.0.0.1".to_string(),
             ttl: 300,
@@ -190,25 +249,15 @@ fn update_prerequisite_yxrrset_leaves_zone_unchanged() {
     );
     zones.insert("example.test".to_string(), zone);
 
-    let handler = DynamicUpdateHandler::new(zones.clone()).with_config(true, true, false);
+    let handler = handler(zones.clone());
     let client: IpAddr = "10.0.0.1".parse().unwrap();
-    let query = build_update_with_prerequisite("example.test", "exists.example.test", 1, 3);
+    let query = build_update_with_prerequisite("example.test", "exists.example.test", 1, CLASS_ANY);
 
-    let result = handler.handle_update(&query, client);
-    assert!(
-        result.is_ok(),
-        "handler must return Ok for prerequisite check: {:?}",
-        result.err()
-    );
-    let response = result.unwrap();
-    let rcode = response[3] & 0x0F;
-    // class 3 (ExistsRRset) = "name is in use" — prerequisite IS met because the name exists.
-    // With no update records (nscount=0, arcount=0), the update proceeds with no changes → NOERROR.
+    let response = handler.handle_update(&query, client).unwrap();
     assert_eq!(
-        rcode,
+        response[3] & 0x0F,
         wire::UPDATE_RCODE_NOERROR,
-        "YXRRSET on existing name should succeed (NOERROR), got {}",
-        rcode
+        "existing RRset prerequisite must hold"
     );
 
     let z = zones.get("example.test").unwrap();
@@ -218,61 +267,104 @@ fn update_prerequisite_yxrrset_leaves_zone_unchanged() {
     );
 }
 
+/// NONE + type + TTL 0 + RDLENGTH 0 on an existing RRset is YXRRSET.
 #[test]
-fn update_remove_final_soa_refused() {
+fn update_prerequisite_rrset_not_exists_failure_returns_yxrrset() {
     let zones = Arc::new(ShardedZoneStore::new());
-    zones.insert("example.test".to_string(), zone_with_soa("example.test", 1));
-
-    let handler = DynamicUpdateHandler::new(zones.clone()).with_config(true, true, false);
-    let client: IpAddr = "10.0.0.1".parse().unwrap();
-    let query = build_update_remove_final_soa("example.test");
-
-    let result = handler.handle_update(&query, client);
-    assert!(
-        result.is_ok(),
-        "post-mutation validation failure returns Ok with NOTAUTH RCODE"
+    let mut zone = zone_with_soa("example.test", 1);
+    zone.records.insert(
+        ("exists".to_string(), RecordType::A),
+        vec![DnsZoneRecord {
+            name: "exists".to_string(),
+            record_type: RecordType::A,
+            value: "10.0.0.1".to_string(),
+            ttl: 300,
+            priority: None,
+        }],
     );
-    let response = result.unwrap();
-    let rcode = response[3] & 0x0F;
+    zones.insert("example.test".to_string(), zone);
+
+    let handler = handler(zones.clone());
+    let client: IpAddr = "10.0.0.1".parse().unwrap();
+    let query =
+        build_update_with_prerequisite("example.test", "exists.example.test", 1, CLASS_NONE);
+
+    let response = handler.handle_update(&query, client).unwrap();
     assert_eq!(
-        rcode,
-        wire::UPDATE_RCODE_NOTAUTH,
-        "removing final SOA must return NOTAUTH (9), got {}",
-        rcode
+        response[3] & 0x0F,
+        wire::UPDATE_RCODE_YXRRSET,
+        "not-exists prerequisite on an existing RRset must be YXRRSET"
     );
 
     let z = zones.get("example.test").unwrap();
-    assert_eq!(
-        z.serial, 1,
-        "zone serial must remain unchanged after refused update"
-    );
-    assert!(
-        z.records.contains_key(&("@".to_string(), RecordType::SOA)),
-        "SOA must still exist in zone"
-    );
+    assert_eq!(z.serial, 1, "zone serial must remain unchanged");
 }
 
+/// NONE + ANY + TTL 0 + RDLENGTH 0 on a name in use is YXDOMAIN.
 #[test]
-fn update_duplicate_soa_add_refused() {
+fn update_prerequisite_name_not_in_use_failure_returns_yxdomain() {
     let zones = Arc::new(ShardedZoneStore::new());
     zones.insert("example.test".to_string(), zone_with_soa("example.test", 1));
 
-    let handler = DynamicUpdateHandler::new(zones.clone()).with_config(true, true, false);
+    let handler = handler(zones.clone());
     let client: IpAddr = "10.0.0.1".parse().unwrap();
-    let query = build_update_duplicate_soa_add("example.test");
+    // "Name is not in use" for the apex, which the SOA makes exist.
+    let query = build_update_with_prerequisite("example.test", "@", 255, CLASS_NONE);
+
+    let response = handler.handle_update(&query, client).unwrap();
+    assert_eq!(
+        response[3] & 0x0F,
+        wire::UPDATE_RCODE_YXDOMAIN,
+        "name-not-in-use prerequisite on an existing name must be YXDOMAIN"
+    );
+
+    let z = zones.get("example.test").unwrap();
+    assert_eq!(z.serial, 1, "zone serial must remain unchanged");
+}
+
+/// RFC 2136 §3.4.2.3: an apex SOA RRset delete is ignored, not fatal.
+#[test]
+fn update_apex_soa_delete_is_ignored() {
+    let zones = Arc::new(ShardedZoneStore::new());
+    zones.insert("example.test".to_string(), zone_with_soa("example.test", 1));
+
+    let handler = handler(zones.clone());
+    let client: IpAddr = "10.0.0.1".parse().unwrap();
+    let query = build_update_delete_record("example.test", "@", 6);
 
     let result = handler.handle_update(&query, client);
-    assert!(
-        result.is_ok(),
-        "post-mutation validation returns Ok with NOTAUTH RCODE"
-    );
+    assert!(result.is_ok(), "the update is answered, not an error");
     let response = result.unwrap();
-    let rcode = response[3] & 0x0F;
     assert_eq!(
-        rcode,
-        wire::UPDATE_RCODE_NOTAUTH,
-        "duplicate SOA must return NOTAUTH (9), got {}",
-        rcode
+        response[3] & 0x0F,
+        wire::UPDATE_RCODE_NOERROR,
+        "a protected apex delete is ignored and the update still succeeds"
+    );
+
+    let z = zones.get("example.test").unwrap();
+    assert!(
+        z.records.contains_key(&("@".to_string(), RecordType::SOA)),
+        "SOA must survive an apex SOA delete"
+    );
+}
+
+/// RFC 2136 §3.4.2.2: an SOA add with a newer serial replaces the SOA.
+#[test]
+fn update_soa_add_with_newer_serial_replaces_soa() {
+    let zones = Arc::new(ShardedZoneStore::new());
+    zones.insert("example.test".to_string(), zone_with_soa("example.test", 1));
+
+    let handler = handler(zones.clone());
+    let client: IpAddr = "10.0.0.1".parse().unwrap();
+    let query = build_update_duplicate_soa_add("example.test", 999);
+
+    let result = handler.handle_update(&query, client);
+    assert!(result.is_ok());
+    let response = result.unwrap();
+    assert_eq!(
+        response[3] & 0x0F,
+        wire::UPDATE_RCODE_NOERROR,
+        "an add with a newer SOA serial is applied"
     );
 
     let z = zones.get("example.test").unwrap();
@@ -280,31 +372,40 @@ fn update_duplicate_soa_add_refused() {
     assert_eq!(
         soa_records.len(),
         1,
-        "only one SOA record must remain after refused duplicate"
+        "only one SOA record must remain after replacement"
+    );
+    assert_eq!(z.serial, 999, "the zone serial follows the added SOA");
+    assert!(
+        soa_records[0].value.split_whitespace().nth(2) == Some("999"),
+        "the served SOA RDATA carries the same serial, got '{}'",
+        soa_records[0].value
     );
 }
 
+/// RFC 2136 §3.4.2.2: CNAME never coexists with other data; the conflicting
+/// update RR is ignored and the rest of the transaction still applies.
 #[test]
-fn update_invalid_cname_coexistence_refused() {
+fn update_invalid_cname_coexistence_ignored() {
     let zones = Arc::new(ShardedZoneStore::new());
     zones.insert("example.test".to_string(), zone_with_soa("example.test", 1));
 
-    let handler = DynamicUpdateHandler::new(zones.clone()).with_config(true, true, false);
+    let handler = handler(zones.clone());
     let client: IpAddr = "10.0.0.1".parse().unwrap();
     let query = build_update_invalid_cname_coexistence("example.test");
 
     let result = handler.handle_update(&query, client);
-    if let Ok(response) = &result {
-        let rcode = response[3] & 0x0F;
-        assert!(
-            rcode != wire::UPDATE_RCODE_NOERROR,
-            "CNAME + A coexistence must be refused (RFC 1034 §3.6.2), got NOERROR"
-        );
-    }
+    assert!(result.is_ok(), "the update is answered: {:?}", result.err());
+
     let z = zones.get("example.test").unwrap();
-    assert_eq!(
-        z.serial, 1,
-        "zone serial must remain unchanged after refused CNAME coexistence"
+    let www_cname = z.records.get(&("www".to_string(), RecordType::CNAME));
+    let www_a = z.records.get(&("www".to_string(), RecordType::A));
+    assert!(
+        www_cname.is_none() || www_a.is_none(),
+        "CNAME and A must not coexist for one owner"
+    );
+    assert!(
+        www_a.is_some(),
+        "the non-conflicting A add must still apply"
     );
 }
 
@@ -313,7 +414,10 @@ fn update_require_tsig_absent_refused() {
     let zones = Arc::new(ShardedZoneStore::new());
     zones.insert("example.test".to_string(), zone_with_soa("example.test", 1));
 
-    let handler = DynamicUpdateHandler::new(zones.clone()).with_config(true, true, true);
+    let handler = DynamicUpdateHandler::new(zones.clone())
+        .with_tsig_verifier(test_verifier())
+        .with_config(true, true, true)
+        .expect("require_tsig with a verifier may be constructed");
     let client: IpAddr = "10.0.0.1".parse().unwrap();
     let query = build_update_add_record("example.test", "new.example.test", 1, &[1, 2, 3, 4], 300);
 
@@ -324,7 +428,7 @@ fn update_require_tsig_absent_refused() {
     );
     let err = result.unwrap_err();
     assert!(
-        err.contains("TSIG"),
+        err.to_string().contains("TSIG"),
         "error message must mention TSIG: {}",
         err
     );
@@ -348,6 +452,7 @@ fn update_successful_add_invalidates_cache() {
 
     let handler = DynamicUpdateHandler::new(zones.clone())
         .with_config(true, true, false)
+        .expect("no TSIG required")
         .with_cache(cache.clone());
     let client: IpAddr = "10.0.0.1".parse().unwrap();
     let query = build_update_add_record("example.test", "new.example.test", 1, &[1, 2, 3, 4], 300);
@@ -369,7 +474,7 @@ fn update_successful_add_increments_serial() {
         zone_with_soa("example.test", 10),
     );
 
-    let handler = DynamicUpdateHandler::new(zones.clone()).with_config(true, true, false);
+    let handler = handler(zones.clone());
     let client: IpAddr = "10.0.0.1".parse().unwrap();
     let query = build_update_add_record("example.test", "new.example.test", 1, &[1, 2, 3, 4], 300);
 
@@ -381,5 +486,14 @@ fn update_successful_add_increments_serial() {
         z.serial > 10,
         "serial must have increased after successful update, got {}",
         z.serial
+    );
+    let soa = &z.records.get(&("@".to_string(), RecordType::SOA)).unwrap()[0];
+    assert!(
+        soa.value
+            .split_whitespace()
+            .nth(2)
+            .and_then(|serial| serial.parse::<u32>().ok())
+            == Some(z.serial),
+        "the served SOA serial must match the zone serial"
     );
 }

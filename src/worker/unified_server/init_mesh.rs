@@ -425,6 +425,7 @@ pub async fn init_mesh_and_threat_intel(
                         require_cert_chain_verification: dns_cfg
                             .mesh
                             .require_cert_chain_verification,
+                        authorized_domains: dns_cfg.mesh.authorized_domains.clone(),
                         ..Default::default()
                     };
 
@@ -484,6 +485,7 @@ pub async fn init_mesh_and_threat_intel(
                                         require_cert_chain_verification: dns_cfg
                                             .mesh
                                             .require_cert_chain_verification,
+                                        authorized_domains: dns_cfg.mesh.authorized_domains.clone(),
                                         ..Default::default()
                                     };
 

@@ -3,13 +3,17 @@
 //! Verifies that Ed25519/RSA key generation, signing, RRSIG construction,
 //! and NSEC chain creation produce well-formed DNSSEC artifacts.
 
+mod support;
+
+use support::dnssec::{verify_signed_data, DnskeyParts};
 use synvoid_dns::dnssec::{Algorithm, KeyType, ZoneSigningKey};
 use synvoid_dns::dnssec_signing::{
     create_nsec_record, create_rrsig_record, find_next_name_in_zone, get_nsec_type_bitmap,
     sign_data,
 };
 use synvoid_dns::dnssec_validation::{
-    calculate_key_tag, canonical_name, canonical_rdata, compute_dnskey, compute_ds_digest,
+    calculate_key_tag, canonical_dns_message, canonical_name, canonical_rdata, compute_dnskey,
+    compute_ds_digest,
 };
 use synvoid_dns::server::{DnsZoneRecord, RecordType, Zone};
 
@@ -134,57 +138,59 @@ fn ed25519_same_data_signature_length_stable() {
 // Section 2: RRSIG construction shape
 // ══════════════════════════════════════════════════════════════════════
 
-/// RRSIG RDATA wire format: type_covered(2) + algorithm(1) + labels(1) +
-/// original_ttl(4) + sig_expiration(4) + sig_inception(4) + key_tag(2) +
-/// signer_name(wire) + signature(variable).
+/// The RRSIG RDATA is a signature over the RFC 4034 §3.1.2 signed data, not a
+/// bag of fields: this builds an RRSIG, signs the canonical data the RRSIG
+/// actually covers, and verifies the embedded signature with hickory's
+/// verifier. A wrong type, label count, TTL, key tag, or signer name changes
+/// the signed bytes and fails here.
+///
+/// This replaces the old `rrsig_construction_shape` test, which asserted the
+/// same field offsets over a placeholder signature and therefore could not
+/// tell a valid signature from a signature over the relative storage name.
 #[test]
-fn rrsig_construction_shape() {
+fn rrsig_construction_verifies_over_the_signed_data() {
     let key = ed25519_zsk();
-    let data = b"some rrset data";
-    let signature = sign_data(data, &key).unwrap();
-    let rrsig = create_rrsig_record(&key, 1, 300, "signed.test.", &signature, 2);
+    let owner = "www.signed.test.";
+    let ttl = 300;
+    let labels = 3; // www.signed.test
 
-    // type_covered = A (1)
-    assert_eq!(rrsig[0], 0, "type_covered high byte");
-    assert_eq!(rrsig[1], 1, "type_covered low byte = A");
+    // A RRSIG RDATA prefix (everything before the signature) is what the
+    // signature covers, together with the canonical RR.
+    let rrsig_prefix = create_rrsig_record(&key, 1, ttl, "signed.test.", &[], labels);
 
-    // algorithm = Ed25519 (15)
-    assert_eq!(rrsig[2], 15, "algorithm must be Ed25519 (15)");
+    let rdata = canonical_rdata(1, "192.0.2.10", None, None, None, ttl);
+    let mut signed_data = rrsig_prefix.clone();
+    signed_data.extend_from_slice(&canonical_dns_message(owner, 1, 1, ttl, &rdata).unwrap());
 
-    // labels = 2 (signed.test. = 2 labels)
-    assert_eq!(rrsig[3], 2, "labels count must be 2");
+    let signature = sign_data(&signed_data, &key).unwrap();
+    let mut rrsig = rrsig_prefix.clone();
+    rrsig.extend_from_slice(&signature);
 
-    // original_ttl = 300
-    let orig_ttl = u32::from_be_bytes(rrsig[4..8].try_into().unwrap());
-    assert_eq!(orig_ttl, 300, "original_ttl must be 300");
-
-    // sig_expiration and sig_inception (8 bytes total)
-    let sig_exp = u32::from_be_bytes(rrsig[8..12].try_into().unwrap());
-    let sig_inc = u32::from_be_bytes(rrsig[12..16].try_into().unwrap());
+    // The fields a validator reads out of the wire RRSIG.
+    assert_eq!(rrsig[3], labels, "Labels must describe the FQDN");
+    assert_eq!(
+        u16::from_be_bytes(rrsig[16..18].try_into().unwrap()),
+        key.key_tag(),
+        "the key tag must name the signing key"
+    );
     assert!(
-        sig_exp > sig_inc,
-        "sig_expiration ({}) must be > sig_inception ({})",
-        sig_exp,
-        sig_inc
+        rrsig.ends_with(&signature),
+        "the signature is the tail of the RDATA"
     );
 
-    // key_tag must match the signing key's tag.
-    let kt = u16::from_be_bytes(rrsig[16..18].try_into().unwrap());
-    assert_eq!(kt, key.key_tag(), "key_tag must match ZSK");
+    verify_signed_data(&signed_data, &signature, &DnskeyParts::from_key(&key))
+        .expect("the signature must verify over the data the RRSIG covers");
 
-    // Signer name is wire-encoded "signed.test."
-    // Skip signer name to reach signature
-    let mut pos = 18;
-    while pos < rrsig.len() && rrsig[pos] != 0 {
-        pos += 1 + rrsig[pos] as usize;
-    }
-    pos += 1; // skip null terminator
-    assert!(pos < rrsig.len(), "signature must follow signer name");
-    let sig_from_rrsig = &rrsig[pos..];
-    assert_eq!(
-        sig_from_rrsig,
-        signature.as_slice(),
-        "embedded signature must match computed signature"
+    // The old signer covered the storage key `www` with Labels = 1. Same
+    // timestamps and key tag — only the owner and label count differ — so this
+    // must fail for exactly the reason that makes the zone bogus.
+    let mut wrong_prefix = rrsig_prefix.clone();
+    wrong_prefix[3] = 1;
+    let mut wrong = wrong_prefix;
+    wrong.extend_from_slice(&canonical_dns_message("www.", 1, 1, ttl, &rdata).unwrap());
+    assert!(
+        verify_signed_data(&wrong, &signature, &DnskeyParts::from_key(&key)).is_err(),
+        "the signature must not verify over the relative storage name"
     );
 }
 
@@ -368,7 +374,7 @@ fn key_tag_idempotent() {
 /// canonical_name produces lowercase wire format.
 #[test]
 fn canonical_name_lowercases() {
-    let cn = canonical_name("WWW.Example.Test.");
+    let cn = canonical_name("WWW.Example.Test.").unwrap();
     assert!(
         cn.windows(3).any(|w| w == b"www"),
         "canonical name must be lowercase: {:?}",

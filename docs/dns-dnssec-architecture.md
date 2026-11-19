@@ -18,51 +18,114 @@ When operating as a forwarding resolver, SynVoid does **not** perform full DNSSE
 3. Upstream returns RRSIG + DNSKEY/NSEC/NSEC3 records alongside the answer.
 4. SynVoid verifies the AD (Authenticated Data) bit from upstream and, if set, propagates it to the client.
 
-## NSEC3 Support
+## Denial of Existence (NSEC / NSEC3)
 
-SynVoid generates NSEC3 records for authoritative zones it serves. Supported hash algorithms:
+A signed zone's denial records are **derived from the zone at load time**, not
+synthesized per query (phase 05). `crates/synvoid-dns/src/denial.rs` builds:
 
-| Algorithm | Hash | Status |
-|-----------|------|--------|
-| 1 (SHA-1) | 20 bytes | Fully supported |
-| 2 (SHA-256) | 32 bytes | Implemented but base32 encoding is non-standard for non-20-byte outputs |
+- a canonical owner index in RFC 4034 §6.1 order (label sequences compared
+  from the root, ASCII case-folded) — not `String` order;
+- one NSEC per owner, `next` wrapping to the apex, with a bitmap equal to the
+  RRsets present at that owner plus `NSEC` and `RRSIG`. `DS` appears only at a
+  delegation (NS present, no SOA); an absent DS is never asserted;
+- an NSEC3 chain in hash order when the zone publishes NSEC3PARAM, including
+  one record per empty non-terminal (empty bitmap) and none below a zone cut.
+  The next-hash field is the next hash **bytes**, and the Hash Length byte is
+  the hash length (20 for SHA-1), never the base32 spelling.
 
-The custom `base32_encode` function in `crates/synvoid-dns/src/dnssec_signing.rs:248` produces RFC 4648 output without padding. For SHA-1 (20 bytes) this matches the expected NSEC3 owner name format per RFC 5155. For SHA-256 the encoding works in practice but is not rigorously tested against RFC 5155 test vectors. SHA-1 is the default (`Nsec3Config::default()` uses algorithm 1).
+`Zone` stores the index behind an `Arc`, so the per-query `Zone` clone copies a
+pointer. `Zone::rebuild_denial` is the single builder and runs on load, reload,
+`add_record`, dynamic-update commit, and store insert. The query path only
+**selects** a proof:
+
+| Answer | NSEC | NSEC3 |
+|---|---|---|
+| NODATA at an owner | the owner's NSEC | the matching NSEC3 |
+| NXDOMAIN | the NSEC covering the qname (canonical predecessor) plus the wildcard-absence NSEC when a wildcard could match | closest-encloser match + next-closer cover + wildcard cover |
+| Wildcard answer | the NSEC covering the next closer name | the NSEC3 covering the next closer name |
+| Wildcard NODATA | next-closer cover + the wildcard owner's NSEC | closest encloser + next-closer cover + wildcard match |
+
+If a signed zone cannot select a proof, it answers SERVFAIL; it never emits an
+unprovable negative answer. Wildcard *lookup* (RFC 4592 synthesis) remains
+phase 09; phase 05 supplies and tests the proof the wildcard answer must carry,
+which is why a name error for a name under an existing wildcard is currently
+SERVFAIL rather than a bogus NXDOMAIN.
 
 ### NSEC3 Parameters
 
 ```
-algorithm:  1 (SHA-1) — default
-flags:      0 (no opt-out)
-iterations: 0 (recommended by RFC 9276)
-salt:       empty (or user-configured)
+algorithm:  1 (SHA-1) — the only algorithm with a standard 20-octet hash
+flags:      0 (no opt-out) or 1 (opt-out)
+iterations: 0 recommended by RFC 9276; capped at 100 by NSEC3_MAX_ITERATIONS
+salt:       at most 255 octets (one-octet length field in the RDATA)
 ```
 
-## Trust Anchor Management (RFC 5011)
+With Opt-Out set, insecure delegations are omitted from the chain and the
+covering NSEC3 carries the flag; a secure delegation stays in the chain with
+its DS bit. A salt longer than 255 octets and an unsupported hash algorithm
+refuse to build a chain (the zone then fails closed on negative answers)
+rather than publish structurally invalid RDATA.
 
-`crates/synvoid-dns/src/trust_anchor.rs` implements RFC 5011 automated trust anchor rollover:
+## Key Rotation (manual runbook)
 
+There is **no in-process key-rotation task** (phase 05 R4). The previous task
+rotated keystore handles on a timer but never re-published them into the served
+zones, so the published DNSKEY and the validating key silently diverged (D24).
+The zone's `ksk_key`/`zsk_key` handles are **reload-only**: `initialize_dnssec`
+sets them from the keystore's active keys at startup.
+
+To rotate:
+
+1. Stop the server (or take the zone out of service).
+2. Generate a new **active** key of the required type with the
+   `synvoid-dnssec-keystore` management API (`generate_key` writes a new active
+   key file that `load_keys_from_disk` selects). Keep the previous key material
+   until the propagation interval has passed. Note: `complete_key_rollover`
+   currently swaps the standby handle only in memory and does not promote the
+   standby files on disk, so a restart would reload the old active key; use
+   `generate_key`, or promote the standby files yourself, before restarting.
+3. Start the server. `initialize_dnssec` loads the newest active keys from disk
+   and republishes them in every zone's DNSKEY RRset; restarting is what makes
+   the served zone and the keystore agree.
+4. Confirm the served DNSKEY/RRSIG with a validator (`delv`/`dig +dnssec`)
+   before retiring the old key.
+5. For a KSK rollover, update the parent DS only after the new DNSKEY has been
+   served for at least the propagation interval (2x the zone TTL by default).
+
+Rotating keys in the keystore while the server keeps running is a no-op for
+the served zone; do not script it.
+
+## Trust Anchor Management (static; RFC 5011 removed)
+
+SynVoid reads **static** DNSSEC trust anchors from one file at startup:
+
+```rust
+// crates/synvoid-dns/src/resolver.rs
+pub fn load_static_trust_anchors(path: &Path)
+    -> Result<hickory_proto::dnssec::TrustAnchors, String>;
 ```
-NewKeySeen → [validate via CDS/CDNSKEY] → Pending
-Pending    → [pending_observation_days]  → Valid
-Valid      → [REVOKE bit set]           → Revoked
-Revoked    → [revocation_grace_days]    → Removed
-Removed    → [extended_removal_days]    → Purged
-Valid      → [absent retention_days]    → Missing
-```
 
-Key state transitions are driven by `process_rfc5011_updates()` which runs
-periodically. The runtime struct `TrustAnchorConfig` lives in
-`crates/synvoid-dns/src/trust_anchor.rs`; the TOML-facing struct of the same
-name is in `crates/synvoid-config/src/dns/dns_dnssec.rs` and is configured at
-**`[dns.trust_anchors]`** (a child of `[dns]`, sibling of `[dns.recursive]`).
+The path is `dns.recursive.trust_anchor_path`; `HickoryRecursor::from_paths`
+feeds it to hickory as `DnssecPolicy::ValidateWithStaticKey`. Replacing the file
+takes effect at the next process start.
 
-Note that `trust_anchors.enabled = true` is currently **rejected** by
-`TrustAnchorConfig::validate` with a typed `Unsupported` error — no custom
-trust-anchor manager is wired to the runtime resolver (Phase 45). The state
-machine is real but has no live runtime consumer.
+**RFC 5011 automated anchor management is not implemented** (decision T5). The
+former `crates/synvoid-dns/src/trust_anchor.rs` state machine
+(`NewKeySeen → Pending → Valid → Revoked → Removed → Missing`) and the
+`process_rfc5011_updates()` task were deleted: nothing fed the state machine
+(no DNSKEY observation was ever scheduled) and nothing consumed its output (the
+recursor's anchors were a startup snapshot), so promotions and revocations could
+not affect validation. The `[dns.trust_anchors]` section still parses, but
+`enabled = true` is rejected with a typed `Unsupported` error that names
+`dns.recursive.trust_anchor_path` as the only supported source.
 
-For detailed RFC 5011 documentation including state machine diagrams, configuration options, and implementation notes, see [`/docs/RFC5011_TRUST_ANCHOR.md`](./RFC5011_TRUST_ANCHOR.md).
+Forwarders do not validate locally. `dns.recursive.dnssec_validation = true`
+with a forwarder provider is a startup error unless
+`dns.recursive.allow_unvalidated_forwarding = true` is set; `/health` then
+reports `dnssec_state.validation = "delegated"`.
+
+For the operational notes, see
+[`/docs/RFC5011_TRUST_ANCHOR.md`](./RFC5011_TRUST_ANCHOR.md).
 
 ## AD Bit Propagation
 
@@ -86,7 +149,7 @@ no silent software fallback. Details: `architecture/dnssec_keystore.md`.
 
 - `crates/synvoid-dnssec-keystore/src/` — sealed keys, keystore, HSM backends, DS digests
 - `crates/synvoid-dns/src/dnssec.rs` — custody facade + `Nsec3Config`
-- `crates/synvoid-dns/src/dnssec_signing.rs` — sealed signing entry, NSEC3 generation, base32 encoding
+- `crates/synvoid-dns/src/dnssec_signing.rs` — sealed signing entry, NSEC/NSEC3 wire construction, base32 encoding
+- `crates/synvoid-dns/src/denial.rs` — canonical owner index, NSEC/NSEC3 chains, proof selection
 - `crates/synvoid-dns/src/dnssec_validation.rs` — key tag calculation, DS digests, canonicalization
-- `crates/synvoid-dns/src/trust_anchor.rs` — RFC 5011 state machine
-- `crates/synvoid-dns/src/server/dnssec_impl.rs` — DNSSEC response assembly and server-side NSEC3 synthesis
+- `crates/synvoid-dns/src/server/dnssec_impl.rs` — DNSSEC response assembly, signing-key selection, SERVFAIL policy

@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256, Sha384};
 use subtle::ConstantTimeEq;
 
 use super::dnssec::{DsDigestType, ZoneSigningKey};
+use crate::wire::NameError;
 
 /// Key-tag calculation delegates to the custody crate so DNS and keystore
 /// agree by construction (single implementation in `synvoid-dnssec-keystore`).
@@ -27,156 +28,73 @@ pub fn get_dnskey_record(key: &ZoneSigningKey) -> Vec<u8> {
     record
 }
 
+/// Canonical RDATA for one record, exactly as it is written to the wire.
+///
+/// This is a compatibility wrapper over
+/// [`crate::server::rdata_wire`], the single encoder the response path and
+/// the signer share. There is deliberately no second, presentation-string
+/// based implementation: the previous TXT heuristic guessed a length prefix
+/// from the first byte and signed bytes that were not served (finding L1).
+///
+/// `_weight`/`_port` are retained for the documented signature; SRV is not
+/// encodable as RDATA today, so they carry no information.
 pub fn canonical_rdata(
     record_type: u16,
     value: &str,
     priority: Option<u32>,
-    weight: Option<u32>,
-    port: Option<u32>,
+    _weight: Option<u32>,
+    _port: Option<u32>,
     _ttl: u32,
 ) -> Vec<u8> {
-    match record_type {
-        1 => {
-            if let Ok(ip) = value.parse::<std::net::Ipv4Addr>() {
-                return ip.octets().to_vec();
-            }
-            Vec::new()
-        }
-        28 => {
-            if let Ok(ip) = value.parse::<std::net::Ipv6Addr>() {
-                return ip.octets().to_vec();
-            }
-            Vec::new()
-        }
-        2 => canonical_name(value),
-        5 => canonical_name(value),
-        6 => canonical_soa(value),
-        15 => {
-            let mut rdata = Vec::new();
-            let pri = priority.unwrap_or(10) as u16;
-            rdata.extend_from_slice(&pri.to_be_bytes());
-            rdata.extend_from_slice(&canonical_name(value));
-            rdata
-        }
-        16 => {
-            let mut rdata = Vec::new();
-            let txt = value.as_bytes();
-
-            let mut pos = 0;
-            while pos < txt.len() {
-                let remaining = &txt[pos..];
-                if remaining.is_empty() {
-                    break;
-                }
-                let len = remaining[0] as usize;
-                if len == 0 || pos + 1 + len > txt.len() {
-                    rdata.push(txt.len() as u8);
-                    rdata.extend_from_slice(txt);
-                    break;
-                }
-                rdata.push(len as u8);
-                rdata.extend_from_slice(&remaining[1..1 + len]);
-                pos += 1 + len;
-            }
-
-            if rdata.is_empty() {
-                rdata.push(txt.len() as u8);
-                rdata.extend_from_slice(txt);
-            }
-
-            rdata
-        }
-        33 => {
-            let mut rdata = Vec::new();
-            let pri = priority.unwrap_or(0);
-            let w = weight.unwrap_or(0);
-            let p = port.unwrap_or(0);
-            rdata.extend_from_slice(&pri.to_be_bytes());
-            rdata.extend_from_slice(&w.to_be_bytes());
-            rdata.extend_from_slice(&p.to_be_bytes());
-            rdata.extend_from_slice(&canonical_name(value));
-            rdata
-        }
-        64 | 65 => {
-            if let Ok(svcb_data) = crate::server::DnsServer::parse_svcb_value(value) {
-                svcb_data
-            } else {
-                value.as_bytes().to_vec()
-            }
-        }
-        _ => value.as_bytes().to_vec(),
-    }
+    let record = crate::server::DnsZoneRecord {
+        name: String::new(),
+        record_type: crate::server::RecordType::from(record_type),
+        value: value.to_string(),
+        ttl: 0,
+        priority,
+    };
+    // Malformed data has no canonical form; callers that sign use the
+    // `Result` form and fail closed instead.
+    crate::server::rdata_wire(&record).unwrap_or_default()
 }
 
-pub fn canonical_name(name: &str) -> Vec<u8> {
-    let mut rdata = Vec::new();
-    let name_lower = name.to_lowercase();
-    let name = name_lower.trim_end_matches('.');
+/// Canonical wire form of a **fully qualified** domain name (RFC 4034 §6.2).
+///
+/// The input must be absolute: `"example.com."`, or `"."`/`""` for the root.
+/// A relative name (`"www"`) has no canonical form without its origin, so it
+/// is rejected rather than silently encoded as `\x03www\x00` — that silent
+/// guess is how a signature came to cover the wrong owner (finding D4).
+/// Callers holding a zone-relative storage name must build
+/// [`crate::wire::OwnerName`] first; this function is not a name joiner.
+pub fn canonical_name(fqdn: &str) -> Result<Vec<u8>, NameError> {
+    let name = fqdn.trim();
 
-    if name.is_empty() {
-        rdata.push(0);
-        return rdata;
+    if name.is_empty() || name == "." {
+        return Ok(vec![0]);
     }
 
-    for part in name.split('.') {
-        if !part.is_empty() {
-            rdata.push(part.len() as u8);
-            rdata.extend_from_slice(part.as_bytes());
-        }
-    }
-    rdata.push(0);
-    rdata
+    let Some(absolute) = name.strip_suffix('.') else {
+        return Err(NameError::RelativeName {
+            name: name.to_string(),
+        });
+    };
+
+    crate::wire::encode_name(&absolute.to_ascii_lowercase())
 }
 
-fn canonical_soa(value: &str) -> Vec<u8> {
-    let mut rdata = Vec::new();
-    let parts: Vec<&str> = value.split_whitespace().collect();
-
-    if parts.len() >= 7 {
-        rdata.extend_from_slice(&canonical_name(parts[0]));
-        rdata.extend_from_slice(&canonical_name(parts[1]));
-
-        if let Ok(serial) = parts[2].parse::<u32>() {
-            rdata.extend_from_slice(&serial.to_be_bytes());
-        } else {
-            rdata.extend_from_slice(&0u32.to_be_bytes());
-        }
-
-        for part in parts.iter().take(7).skip(3) {
-            if let Ok(refresh) = part.parse::<u32>() {
-                rdata.extend_from_slice(&refresh.to_be_bytes());
-            } else {
-                rdata.extend_from_slice(&0u32.to_be_bytes());
-            }
-        }
-    }
-
-    rdata
-}
-
+/// Assemble one record in the form RFC 4034 §3.1.2 signs:
+/// `owner | type | class | ttl | rdlength | rdata`.
+///
+/// `name` must be a fully qualified name for the same reason
+/// [`canonical_name`] requires one.
 pub fn canonical_dns_message(
     name: &str,
     record_type: u16,
     record_class: u16,
     ttl: u32,
     rdata: &[u8],
-) -> Vec<u8> {
-    let mut msg = Vec::new();
-
-    let name_lower = name.to_lowercase();
-    let name = name_lower.trim_end_matches('.');
-
-    if name.is_empty() {
-        msg.push(0);
-    } else {
-        for part in name.split('.') {
-            if !part.is_empty() {
-                msg.push(part.len() as u8);
-                msg.extend_from_slice(part.as_bytes());
-            }
-        }
-        msg.push(0);
-    }
+) -> Result<Vec<u8>, NameError> {
+    let mut msg = canonical_name(name)?;
 
     msg.extend_from_slice(&record_type.to_be_bytes());
     msg.extend_from_slice(&record_class.to_be_bytes());
@@ -184,15 +102,7 @@ pub fn canonical_dns_message(
     msg.extend_from_slice(&(rdata.len() as u16).to_be_bytes());
     msg.extend_from_slice(rdata);
 
-    msg
-}
-
-pub fn count_labels(name: &str) -> u8 {
-    let name = name.trim_end_matches('.');
-    if name.is_empty() {
-        return 1;
-    }
-    name.split('.').count() as u8
+    Ok(msg)
 }
 
 pub fn compute_dnskey_canonical(
@@ -384,19 +294,19 @@ mod tests {
 
     #[test]
     fn test_canonical_name_empty() {
-        let name = canonical_name("");
+        let name = canonical_name("").unwrap();
         assert_eq!(name, vec![0]);
     }
 
     #[test]
     fn test_canonical_name_root() {
-        let name = canonical_name(".");
+        let name = canonical_name(".").unwrap();
         assert_eq!(name, vec![0]);
     }
 
     #[test]
     fn test_canonical_name_labels() {
-        let name = canonical_name("example.com");
+        let name = canonical_name("example.com.").unwrap();
         assert_eq!(name.len(), 12 + 1);
         assert_eq!(name[0], 7);
         assert_eq!(&name[1..8], b"example");
@@ -406,18 +316,24 @@ mod tests {
     }
 
     #[test]
-    fn test_count_labels_root() {
-        assert_eq!(count_labels("."), 1);
-    }
-
-    #[test]
-    fn test_count_labels_single() {
-        assert_eq!(count_labels("com"), 1);
-    }
-
-    #[test]
-    fn test_count_labels_multi() {
-        assert_eq!(count_labels("www.example.com"), 3);
+    fn test_canonical_name_rejects_a_relative_name() {
+        // A relative storage key has no canonical form without the origin.
+        // Encoding it as `\x03www\x00` is finding D4.
+        assert_eq!(
+            canonical_name("www"),
+            Err(NameError::RelativeName {
+                name: "www".to_string()
+            })
+        );
+        // The same name with its origin resolves, and the labels come from
+        // `OwnerName`.
+        assert_eq!(
+            canonical_name(&crate::wire::OwnerName::new("www", "example.com").fqdn()).unwrap(),
+            vec![
+                0x03, b'w', b'w', b'w', 0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0x03, b'c',
+                b'o', b'm', 0,
+            ]
+        );
     }
 
     #[test]
@@ -523,7 +439,7 @@ mod tests {
 
     #[test]
     fn test_canonical_dns_message() {
-        let msg = canonical_dns_message("example.com.", 1, 1, 300, &[0x01; 4]);
+        let msg = canonical_dns_message("example.com.", 1, 1, 300, &[0x01; 4]).unwrap();
         assert!(!msg.is_empty());
     }
 }

@@ -96,6 +96,64 @@ impl DnsFirewall {
         self.country_lookup.is_some()
     }
 
+    /// Build the firewall a listener enforces from its runtime configuration.
+    ///
+    /// This is the single definition of the built-in rule set: the
+    /// authoritative listener and the recursive listener install the same
+    /// policy, so "the firewall is configured" cannot mean two different things
+    /// depending on which port a query arrives on. `Err` means a built-in rule
+    /// could not be installed; a caller that can fail startup (the recursive
+    /// listener) must do so rather than run without the policy.
+    pub fn from_runtime(
+        config: &crate::runtime_config::DnsFirewallRuntimeConfig,
+    ) -> Result<Self, String> {
+        let mut firewall = Self::new();
+
+        if config.block_internal_ips {
+            for (id, target) in [
+                ("block_internal_ips", "10.0.0.0/8"),
+                ("block_private_172", "172.16.0.0/12"),
+                ("block_private_192", "192.168.0.0/16"),
+                ("block_loopback", "127.0.0.0/8"),
+                ("block_linklocal", "169.254.0.0/16"),
+                ("block_ipv6_loopback", "::1/128"),
+                ("block_ipv6_ula", "fc00::/7"),
+                ("block_ipv6_linklocal", "fe80::/10"),
+            ] {
+                firewall.add_rule(Self::builtin_rule(
+                    id,
+                    DnsFirewallRuleType::Subnet,
+                    target.to_string(),
+                ))?;
+            }
+        }
+
+        if config.block_zone_transfers {
+            firewall.add_rule(Self::builtin_rule(
+                "block_axfr",
+                DnsFirewallRuleType::Opcode,
+                "0x2".to_string(),
+            ))?;
+        }
+
+        Ok(firewall)
+    }
+
+    /// One built-in block rule. Built-in rules never expire, so `add_rule`
+    /// cannot reject them for being already expired.
+    fn builtin_rule(id: &str, rule_type: DnsFirewallRuleType, target: String) -> DnsFirewallRule {
+        DnsFirewallRule {
+            id: id.to_string(),
+            rule_type,
+            action: DnsFirewallAction::Block,
+            target,
+            ttl: 300,
+            created_at: unix_timestamp_secs(),
+            expires_at: None,
+            enabled: true,
+        }
+    }
+
     pub fn add_rule(&mut self, rule: DnsFirewallRule) -> Result<(), String> {
         if let Some(expires_at) = rule.expires_at {
             if expires_at < unix_timestamp_secs() {
